@@ -1,6 +1,9 @@
 package com.example.dash_map
 
 import android.Manifest
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.Image
+import androidx.compose.ui.layout.ContentScale
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
@@ -58,6 +61,10 @@ class MainActivity : ComponentActivity(), LocationListener {
     private var isPlaying = mutableStateOf(false)
     private var currentSong = mutableStateOf("No song playing")
     private var currentArtist = mutableStateOf("")
+    private var albumArtUrl = mutableStateOf<String?>(null)
+    private var albumArtBitmap = mutableStateOf<android.graphics.Bitmap?>(null)
+    private var mediaPollingRunnable: Runnable? = null
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -71,7 +78,6 @@ class MainActivity : ComponentActivity(), LocationListener {
         super.onCreate(savedInstanceState)
 
         try {
-            // Initialize OSM configuration
             Configuration.getInstance().load(
                 applicationContext,
                 getSharedPreferences("osm_prefs", MODE_PRIVATE)
@@ -83,7 +89,6 @@ class MainActivity : ComponentActivity(), LocationListener {
             audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
             requestDNDPermission()
-            setupMediaController()
 
             setContent {
                 DashMapTheme {
@@ -94,6 +99,7 @@ class MainActivity : ComponentActivity(), LocationListener {
                         isPlaying = isPlaying.value,
                         songTitle = currentSong.value,
                         songArtist = currentArtist.value,
+                        albumArtBitmap = albumArtBitmap.value,  // ADD THIS
                         onEnableDND = { enableDND() },
                         onDisableDND = { disableDND() },
                         onOpenGoogleMaps = { openGoogleMaps() },
@@ -105,11 +111,11 @@ class MainActivity : ComponentActivity(), LocationListener {
             }
 
             requestLocationPermissions()
-
-            // Enable immersive mode immediately
             enableImmersiveMode()
 
-            // Also enable after content is set
+            // Start media polling
+            startMediaPolling()
+
             window.decorView.post {
                 enableImmersiveMode()
             }
@@ -121,7 +127,6 @@ class MainActivity : ComponentActivity(), LocationListener {
 
     private fun togglePlayPause() {
         sendMediaButton(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
-        isPlaying.value = !isPlaying.value
     }
 
     private fun sendMediaButton(keyCode: Int) {
@@ -131,81 +136,87 @@ class MainActivity : ComponentActivity(), LocationListener {
 
             val eventUp = KeyEvent(KeyEvent.ACTION_UP, keyCode)
             audioManager.dispatchMediaKeyEvent(eventUp)
+
+            Log.d("DashMap", "Media button sent: $keyCode")
         } catch (e: Exception) {
             Log.e("DashMap", "Error sending media button", e)
         }
     }
 
-    private fun setupMediaController() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-                // Check if notification listener is enabled
-                val notificationListenerString = Settings.Secure.getString(
-                    contentResolver,
-                    "enabled_notification_listeners"
-                )
+    private fun startMediaPolling() {
+        stopMediaPolling()
 
-                if (notificationListenerString == null ||
-                    !notificationListenerString.contains(packageName)) {
-                    Log.w("DashMap", "Notification listener not enabled")
-                    return
-                }
+        mediaPollingRunnable = object : Runnable {
+            override fun run() {
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                        val notificationListenerString = Settings.Secure.getString(
+                            contentResolver,
+                            "enabled_notification_listeners"
+                        )
 
-                val mediaSessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
+                        if (notificationListenerString != null && notificationListenerString.contains(packageName)) {
+                            val mediaSessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
+                            val componentName = android.content.ComponentName(
+                                this@MainActivity,
+                                MediaNotificationListener::class.java
+                            )
 
-                // Create ComponentName for our NotificationListenerService
-                val componentName = android.content.ComponentName(
-                    this,
-                    MediaNotificationListener::class.java
-                )
+                            val controllers = try {
+                                mediaSessionManager?.getActiveSessions(componentName)
+                            } catch (e: Exception) {
+                                null
+                            }
 
-                val controllers = try {
-                    mediaSessionManager?.getActiveSessions(componentName)
-                } catch (e: SecurityException) {
-                    Log.e("DashMap", "SecurityException: Notification access not granted", e)
-                    return
-                }
+                            controllers?.firstOrNull()?.let { controller ->
+                                controller.metadata?.let { metadata ->
+                                    val title = metadata.getString(android.media.MediaMetadata.METADATA_KEY_TITLE) ?: "No song playing"
+                                    val artist = metadata.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST) ?: ""
+                                    val bitmap = metadata.getBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART)
+                                        ?: metadata.getBitmap(android.media.MediaMetadata.METADATA_KEY_ART)
+                                    albumArtUrl.value = if (bitmap != null) "has_art" else null
+                                    albumArtBitmap.value = bitmap  // ADD THIS LINE
+                                    if (title != currentSong.value || artist != currentArtist.value) {
+                                        currentSong.value = title
+                                        currentArtist.value = artist
 
-                controllers?.firstOrNull()?.let { controller ->
-                    updateMediaInfo(controller)
+                                        val bitmap = metadata.getBitmap(android.media.MediaMetadata.METADATA_KEY_ALBUM_ART)
+                                            ?: metadata.getBitmap(android.media.MediaMetadata.METADATA_KEY_ART)
+                                        albumArtUrl.value = if (bitmap != null) "has_art" else null
 
-                    controller.registerCallback(object : MediaController.Callback() {
-                        override fun onMetadataChanged(metadata: android.media.MediaMetadata?) {
-                            metadata?.let {
-                                currentSong.value = it.getString(android.media.MediaMetadata.METADATA_KEY_TITLE) ?: "No song playing"
-                                currentArtist.value = it.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST) ?: ""
-                                Log.d("DashMap", "Song: ${currentSong.value}, Artist: ${currentArtist.value}")
+                                        Log.d("DashMap", "🎵 TRACK CHANGED - Song: '$title', Artist: '$artist', Has Art: ${albumArtUrl.value != null}")
+                                    }
+                                }
+
+
+                                controller.playbackState?.let { state ->
+                                    val newIsPlaying = state.state == android.media.session.PlaybackState.STATE_PLAYING
+                                    if (newIsPlaying != isPlaying.value) {
+                                        isPlaying.value = newIsPlaying
+                                        Log.d("DashMap", "▶️ Playback: ${if (isPlaying.value) "PLAYING" else "PAUSED"}")
+                                    }
+                                }
                             }
                         }
-
-                        override fun onPlaybackStateChanged(state: android.media.session.PlaybackState?) {
-                            state?.let {
-                                isPlaying.value = it.state == android.media.session.PlaybackState.STATE_PLAYING
-                                Log.d("DashMap", "Playback state: ${it.state}")
-                            }
-                        }
-                    })
-                } ?: run {
-                    Log.w("DashMap", "No active media sessions found")
+                    }
+                } catch (e: Exception) {
+                    Log.e("DashMap", "Error polling media", e)
                 }
+
+                handler.postDelayed(this, 1000)
             }
-        } catch (e: Exception) {
-            Log.e("DashMap", "Error setting up media controller", e)
         }
+
+        handler.postDelayed(mediaPollingRunnable!!, 1000)
+        Log.d("DashMap", "📻 Media polling started (every 1s)")
     }
 
-    private fun updateMediaInfo(controller: MediaController) {
-        try {
-            controller.metadata?.let { metadata ->
-                currentSong.value = metadata.getString(android.media.MediaMetadata.METADATA_KEY_TITLE) ?: "No song playing"
-                currentArtist.value = metadata.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST) ?: ""
-            }
-            controller.playbackState?.let { state ->
-                isPlaying.value = state.state == android.media.session.PlaybackState.STATE_PLAYING
-            }
-        } catch (e: Exception) {
-            Log.e("DashMap", "Error updating media info", e)
+    private fun stopMediaPolling() {
+        mediaPollingRunnable?.let {
+            handler.removeCallbacks(it)
+            Log.d("DashMap", "📻 Media polling stopped")
         }
+        mediaPollingRunnable = null
     }
 
     private fun openGoogleMaps() {
@@ -280,13 +291,12 @@ class MainActivity : ComponentActivity(), LocationListener {
         val newLocation = GeoPoint(location.latitude, location.longitude)
         currentLocation.value = newLocation
 
-        // Only fetch weather if location changed significantly (> 1km)
         val shouldFetch = weatherData.value?.let {
             val lastLat = currentLocation.value?.latitude ?: 0.0
             val lastLon = currentLocation.value?.longitude ?: 0.0
             val distance = FloatArray(1)
             Location.distanceBetween(lastLat, lastLon, location.latitude, location.longitude, distance)
-            distance[0] > 1000 // 1km threshold
+            distance[0] > 1000
         } ?: true
 
         if (shouldFetch) {
@@ -295,17 +305,27 @@ class MainActivity : ComponentActivity(), LocationListener {
     }
 
     private fun fetchWeather(lat: Double, lon: Double) {
+        Log.d("DashMap", "========================================")
+        Log.d("DashMap", "🌦️ FETCHING WEATHER for: $lat, $lon")
+        Log.d("DashMap", "========================================")
+
         Thread {
             try {
-                // Updated URL with hourly precipitation
                 val weatherUrl = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current_weather=true&hourly=precipitation_probability&temperature_unit=celsius&daily=sunrise,sunset&timezone=auto"
+
+                Log.d("DashMap", "Weather API URL: $weatherUrl")
+
                 val weatherResponse = URL(weatherUrl).readText()
                 val weatherJson = JSONObject(weatherResponse)
+
+                Log.d("DashMap", "Weather API Response received")
 
                 val currentWeather = weatherJson.getJSONObject("current_weather")
                 val temp = currentWeather.getDouble("temperature").roundToInt()
                 val weatherCode = currentWeather.getInt("weathercode")
                 val windSpeed = currentWeather.getDouble("windspeed").roundToInt()
+
+                Log.d("DashMap", "Temperature: $temp°C, Weather Code: $weatherCode, Wind: $windSpeed km/h")
 
                 val condition = when(weatherCode) {
                     0 -> "Clear"
@@ -317,19 +337,23 @@ class MainActivity : ComponentActivity(), LocationListener {
                     else -> "Partly Cloudy"
                 }
 
-                // Get rain chance from hourly data
                 var rainChance = 0
                 try {
                     val hourly = weatherJson.getJSONObject("hourly")
                     val precipArray = hourly.getJSONArray("precipitation_probability")
+
+                    Log.d("DashMap", "Precipitation array length: ${precipArray.length()}")
+
                     if (precipArray.length() > 0) {
-                        rainChance = precipArray.getInt(0) // Get current hour
+                        rainChance = precipArray.getInt(0)
+                        Log.d("DashMap", "☔ RAIN CHANCE FOUND: $rainChance%")
+                    } else {
+                        Log.w("DashMap", "⚠️ Precipitation array is empty")
                     }
                 } catch (e: Exception) {
-                    Log.e("DashMap", "Error parsing rain data", e)
+                    Log.e("DashMap", "❌ ERROR parsing rain data: ${e.message}", e)
                 }
 
-                // Fetch AQI data
                 var aqi = 0
                 var aqiCategory = "Good"
                 try {
@@ -347,6 +371,8 @@ class MainActivity : ComponentActivity(), LocationListener {
                         aqi <= 300 -> "Very Unhealthy"
                         else -> "Hazardous"
                     }
+
+                    Log.d("DashMap", "AQI: $aqi ($aqiCategory)")
                 } catch (e: Exception) {
                     Log.e("DashMap", "Error fetching AQI", e)
                 }
@@ -364,14 +390,26 @@ class MainActivity : ComponentActivity(), LocationListener {
                     if (city.isEmpty() || city == "null") {
                         city = geocodeJson.optString("principalSubdivision", "Your Location")
                     }
+
+                    Log.d("DashMap", "City: $city")
                 } catch (e: Exception) {
                     Log.e("DashMap", "Error getting city name", e)
                 }
 
                 weatherData.value = WeatherData(temp, city, condition, windSpeed, aqi, aqiCategory, rainChance)
-                Log.d("DashMap", "Weather updated: $temp°, $condition, Rain: $rainChance%")
+
+                Log.d("DashMap", "========================================")
+                Log.d("DashMap", "✅ WEATHER DATA UPDATED SUCCESSFULLY")
+                Log.d("DashMap", "Temperature: $temp°C")
+                Log.d("DashMap", "City: $city")
+                Log.d("DashMap", "Condition: $condition")
+                Log.d("DashMap", "Wind Speed: $windSpeed km/h")
+                Log.d("DashMap", "AQI: $aqi ($aqiCategory)")
+                Log.d("DashMap", "🌧️ RAIN CHANCE: $rainChance%")
+                Log.d("DashMap", "========================================")
+
             } catch (e: Exception) {
-                Log.e("DashMap", "Error fetching weather", e)
+                Log.e("DashMap", "❌ FATAL ERROR fetching weather: ${e.message}", e)
             }
         }.start()
     }
@@ -445,8 +483,7 @@ class MainActivity : ComponentActivity(), LocationListener {
         super.onResume()
         enableImmersiveMode()
         enableDND()
-        // Re-setup media controller on resume
-        setupMediaController()
+        startMediaPolling()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -459,27 +496,23 @@ class MainActivity : ComponentActivity(), LocationListener {
     override fun onPause() {
         super.onPause()
         disableDND()
+        stopMediaPolling()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         try {
             locationManager.removeUpdates(this)
+            stopMediaPolling()
         } catch (e: Exception) {
-            Log.e("DashMap", "Error removing location updates", e)
+            Log.e("DashMap", "Error in onDestroy", e)
         }
     }
 }
 
-// Notification Listener Service to access media sessions
 class MediaNotificationListener : NotificationListenerService() {
-    override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        // This is required for the service to work
-    }
-
-    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
-        // This is required for the service to work
-    }
+    override fun onNotificationPosted(sbn: StatusBarNotification?) {}
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {}
 }
 
 data class WeatherData(
@@ -513,13 +546,14 @@ fun DashMapScreen(
     isPlaying: Boolean,
     songTitle: String,
     songArtist: String,
+    albumArtBitmap: android.graphics.Bitmap?,  // ADD THIS
     onEnableDND: () -> Unit,
     onDisableDND: () -> Unit,
     onOpenGoogleMaps: () -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit
-) {
+){
     var isDNDEnabled by remember { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
@@ -546,14 +580,12 @@ fun DashMapScreen(
                 .padding(16.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Left side - Weather and Spotify stacked vertically
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight(),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Weather widget on top
                 EnhancedWeatherWidget(
                     weather = weather,
                     modifier = Modifier
@@ -561,12 +593,12 @@ fun DashMapScreen(
                         .weight(1f)
                 )
 
-                // Spotify widget on bottom
                 SpotifyWidget(
                     context = context,
                     isPlaying = isPlaying,
                     songTitle = songTitle,
                     songArtist = songArtist,
+                    albumArtBitmap = albumArtBitmap,  // USE THE PARAMETER
                     onPlayPause = onPlayPause,
                     onNext = onNext,
                     onPrevious = onPrevious,
@@ -576,7 +608,6 @@ fun DashMapScreen(
                 )
             }
 
-            // Right side - Map takes full height
             OSMMapWidget(
                 location = location,
                 onOpenMaps = onOpenGoogleMaps,
@@ -586,7 +617,6 @@ fun DashMapScreen(
             )
         }
 
-        // DND indicator
         if (isDNDEnabled) {
             Icon(
                 imageVector = Icons.Default.DoNotDisturb,
@@ -788,17 +818,21 @@ fun EnhancedWeatherWidget(
         }
     }
 }
+
 @Composable
 fun SpotifyWidget(
     context: Context,
     isPlaying: Boolean,
     songTitle: String,
     songArtist: String,
+    albumArtBitmap: android.graphics.Bitmap?,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val hasSong = songTitle != "No song playing"
+
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(24.dp))
@@ -812,82 +846,120 @@ fun SpotifyWidget(
             )
             .padding(20.dp)
     ) {
-        Column(
+        Row(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.SpaceBetween,
-            horizontalAlignment = Alignment.CenterHorizontally
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            // Song Info
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            // Left side - Album Art Area
+            Box(
+                modifier = Modifier
+                    .weight(0.35f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF0D7A3A)),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = Icons.Default.MusicNote,
-                    contentDescription = "Spotify",
-                    tint = Color.White,
-                    modifier = Modifier.size(36.dp)
-                )
-                Text(
-                    text = songTitle,
-                    color = Color.White,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1
-                )
-                if (songArtist.isNotEmpty()) {
-                    Text(
-                        text = songArtist,
-                        color = Color.White.copy(alpha = 0.9f),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1
+                if (albumArtBitmap != null) {
+                    // Display actual album art
+                    androidx.compose.foundation.Image(
+                        bitmap = albumArtBitmap.asImageBitmap(),
+                        contentDescription = "Album Art",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
                     )
-                } else if (songTitle == "No song playing") {
-                    Text(
-                        text = "Enable notification access",
-                        color = Color.White.copy(alpha = 0.7f),
-                        fontSize = 12.sp,
-                        modifier = Modifier.clickable {
-                            try {
-                                val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                Log.e("DashMap", "Error opening settings", e)
-                            }
-                        }
+                } else if (hasSong) {
+                    // Show icon when no art available
+                    Icon(
+                        imageVector = Icons.Default.Album,
+                        contentDescription = "No Album Art",
+                        tint = Color.White.copy(alpha = 0.9f),
+                        modifier = Modifier.size(72.dp)
+                    )
+                } else {
+                    // Show music note when no song
+                    Icon(
+                        imageVector = Icons.Default.MusicNote,
+                        contentDescription = "No Music",
+                        tint = Color.White.copy(alpha = 0.6f),
+                        modifier = Modifier.size(56.dp)
                     )
                 }
             }
 
-            // Music Controls
+            // Right side - Song Info and Controls
             Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                modifier = Modifier
+                    .weight(0.65f)
+                    .fillMaxHeight(),
+                verticalArrangement = Arrangement.SpaceBetween,
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Control buttons
+                // Song Info
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = songTitle,
+                        color = Color.White,
+                        fontSize = if (hasSong) 18.sp else 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+
+                    if (songArtist.isNotEmpty()) {
+                        Text(
+                            text = songArtist,
+                            color = Color.White.copy(alpha = 0.9f),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+
+                    if (!hasSong) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Enable notification access",
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = 11.sp,
+                            modifier = Modifier.clickable {
+                                try {
+                                    val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {
+                                    Log.e("DashMap", "Error opening settings", e)
+                                }
+                            }
+                        )
+                    }
+                }
+
+                // Music Controls
                 Row(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    // Previous button
                     IconButton(
                         onClick = onPrevious,
-                        modifier = Modifier.size(52.dp)
+                        modifier = Modifier.size(56.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.SkipPrevious,
                             contentDescription = "Previous",
                             tint = Color.White,
-                            modifier = Modifier.size(36.dp)
+                            modifier = Modifier.size(40.dp)
                         )
                     }
 
-                    Spacer(modifier = Modifier.width(20.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
 
-                    // Play/Pause button
                     IconButton(
                         onClick = onPlayPause,
                         modifier = Modifier
@@ -902,55 +974,17 @@ fun SpotifyWidget(
                         )
                     }
 
-                    Spacer(modifier = Modifier.width(20.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
 
-                    // Next button
                     IconButton(
                         onClick = onNext,
-                        modifier = Modifier.size(52.dp)
+                        modifier = Modifier.size(56.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.SkipNext,
                             contentDescription = "Next",
                             tint = Color.White,
-                            modifier = Modifier.size(36.dp)
-                        )
-                    }
-                }
-
-                // Open Spotify button
-                Button(
-                    onClick = {
-                        try {
-                            val intent = context.packageManager.getLaunchIntentForPackage("com.spotify.music")
-                            intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            context.startActivity(intent ?: Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://open.spotify.com")))
-                        } catch (e: Exception) {
-                            Log.e("DashMap", "Error opening Spotify", e)
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White.copy(alpha = 0.2f),
-                        contentColor = Color.White
-                    ),
-                    modifier = Modifier
-                        .fillMaxWidth(0.85f)
-                        .height(48.dp),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.OpenInNew,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Text(
-                            text = "Open Spotify",
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold
+                            modifier = Modifier.size(40.dp)
                         )
                     }
                 }
@@ -959,13 +993,14 @@ fun SpotifyWidget(
     }
 }
 
+
 @Composable
 fun OSMMapWidget(
     location: GeoPoint?,
     onOpenMaps: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val defaultLocation = location ?: GeoPoint(19.003, 73.119) // Panvel coordinates
+    val defaultLocation = location ?: GeoPoint(19.003, 73.119)
 
     Box(
         modifier = modifier
@@ -980,7 +1015,6 @@ fun OSMMapWidget(
                     controller.setZoom(15.0)
                     controller.setCenter(defaultLocation)
 
-                    // Add marker
                     val marker = Marker(this).apply {
                         position = defaultLocation
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
@@ -1003,7 +1037,6 @@ fun OSMMapWidget(
             }
         )
 
-        // Navigation button overlay
         Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
