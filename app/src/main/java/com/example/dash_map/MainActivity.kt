@@ -163,11 +163,8 @@ class MainActivity : ComponentActivity(), LocationListener {
                 }
             }
         } catch (e: SecurityException) {
-            Log.e("DashMap", "Notification listener permission not granted", e)
-            // Request notification listener permission
-            val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(intent)
+            Log.w("DashMap", "Notification listener permission not granted. Song details will not be available.")
+            // Don't open settings automatically - just log it
         } catch (e: Exception) {
             Log.e("DashMap", "Error setting up media controller", e)
         }
@@ -586,95 +583,93 @@ fun EnhancedWeatherWidget(
             )
             .padding(20.dp)
     ) {
-        Column(
+        Row(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            // City name
-            Text(
-                text = displayWeather.city,
-                color = Color.White,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Temperature, data, and icon
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-                modifier = Modifier.fillMaxWidth()
+            // Left side - City and Temperature
+            Column(
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.Start
             ) {
-                // Temperature
+                Text(
+                    text = displayWeather.city,
+                    color = Color.White,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
                 Text(
                     text = "${displayWeather.temperature}°",
                     color = Color.White,
                     fontSize = 72.sp,
                     fontWeight = FontWeight.Bold
                 )
+            }
 
-                Spacer(modifier = Modifier.width(16.dp))
-
-                // Weather data (condition, wind, AQI)
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    horizontalAlignment = Alignment.Start
+            // Middle - Wind speed and AQI with larger text
+            Column(
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            ) {
+                // Wind speed
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    Icon(
+                        imageVector = Icons.Default.Air,
+                        contentDescription = "Wind",
+                        tint = Color.White.copy(alpha = 0.9f),
+                        modifier = Modifier.size(24.dp)
+                    )
                     Text(
-                        text = displayWeather.condition,
-                        color = Color.White.copy(alpha = 0.9f),
-                        fontSize = 16.sp,
+                        text = "${displayWeather.windSpeed} km/h",
+                        color = Color.White.copy(alpha = 0.95f),
+                        fontSize = 20.sp,
                         fontWeight = FontWeight.Medium
                     )
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Air,
-                            contentDescription = "Wind",
-                            tint = Color.White.copy(alpha = 0.8f),
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Text(
-                            text = "${displayWeather.windSpeed} km/h",
-                            color = Color.White.copy(alpha = 0.8f),
-                            fontSize = 14.sp
-                        )
-                    }
-
-                    if (displayWeather.aqi > 0) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Eco,
-                                contentDescription = "AQI",
-                                tint = when(displayWeather.aqiCategory) {
-                                    "Good" -> Color(0xFF00E676)
-                                    "Moderate" -> Color(0xFFFFEB3B)
-                                    "Unhealthy for Sensitive" -> Color(0xFFFF9800)
-                                    "Unhealthy" -> Color(0xFFF44336)
-                                    "Very Unhealthy" -> Color(0xFFE91E63)
-                                    else -> Color(0xFF9C27B0)
-                                },
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = "AQI ${displayWeather.aqi}",
-                                color = Color.White.copy(alpha = 0.8f),
-                                fontSize = 14.sp
-                            )
-                        }
-                    }
                 }
 
-                Spacer(modifier = Modifier.width(16.dp))
+                // AQI
+                if (displayWeather.aqi > 0) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Eco,
+                            contentDescription = "AQI",
+                            tint = when(displayWeather.aqiCategory) {
+                                "Good" -> Color(0xFF00E676)
+                                "Moderate" -> Color(0xFFFFEB3B)
+                                "Unhealthy for Sensitive" -> Color(0xFFFF9800)
+                                "Unhealthy" -> Color(0xFFF44336)
+                                "Very Unhealthy" -> Color(0xFFE91E63)
+                                else -> Color(0xFF9C27B0)
+                            },
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Text(
+                            text = "AQI ${displayWeather.aqi}",
+                            color = Color.White.copy(alpha = 0.95f),
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
 
+            // Right side - Icon and Condition
+            Column(
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
                 // Weather icon
                 Icon(
                     imageVector = when(displayWeather.condition) {
@@ -687,7 +682,17 @@ fun EnhancedWeatherWidget(
                     },
                     contentDescription = displayWeather.condition,
                     tint = Color.White.copy(alpha = 0.9f),
-                    modifier = Modifier.size(60.dp)
+                    modifier = Modifier.size(64.dp)
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Weather condition
+                Text(
+                    text = displayWeather.condition,
+                    color = Color.White.copy(alpha = 0.9f),
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Medium
                 )
             }
         }
@@ -748,6 +753,21 @@ fun SpotifyWidget(
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1
+                    )
+                } else if (songTitle == "No song playing") {
+                    Text(
+                        text = "Enable notification access",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 12.sp,
+                        modifier = Modifier.clickable {
+                            try {
+                                val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
+                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                context.startActivity(intent)
+                            } catch (e: Exception) {
+                                Log.e("DashMap", "Error opening settings", e)
+                            }
+                        }
                     )
                 }
             }
