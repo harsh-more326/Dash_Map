@@ -139,8 +139,32 @@ class MainActivity : ComponentActivity(), LocationListener {
     private fun setupMediaController() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                // Check if notification listener is enabled
+                val notificationListenerString = Settings.Secure.getString(
+                    contentResolver,
+                    "enabled_notification_listeners"
+                )
+
+                if (notificationListenerString == null ||
+                    !notificationListenerString.contains(packageName)) {
+                    Log.w("DashMap", "Notification listener not enabled")
+                    return
+                }
+
                 val mediaSessionManager = getSystemService(Context.MEDIA_SESSION_SERVICE) as? MediaSessionManager
-                val controllers = mediaSessionManager?.getActiveSessions(null)
+
+                // Create ComponentName for our NotificationListenerService
+                val componentName = android.content.ComponentName(
+                    this,
+                    MediaNotificationListener::class.java
+                )
+
+                val controllers = try {
+                    mediaSessionManager?.getActiveSessions(componentName)
+                } catch (e: SecurityException) {
+                    Log.e("DashMap", "SecurityException: Notification access not granted", e)
+                    return
+                }
 
                 controllers?.firstOrNull()?.let { controller ->
                     updateMediaInfo(controller)
@@ -157,14 +181,14 @@ class MainActivity : ComponentActivity(), LocationListener {
                         override fun onPlaybackStateChanged(state: android.media.session.PlaybackState?) {
                             state?.let {
                                 isPlaying.value = it.state == android.media.session.PlaybackState.STATE_PLAYING
+                                Log.d("DashMap", "Playback state: ${it.state}")
                             }
                         }
                     })
+                } ?: run {
+                    Log.w("DashMap", "No active media sessions found")
                 }
             }
-        } catch (e: SecurityException) {
-            Log.w("DashMap", "Notification listener permission not granted. Song details will not be available.")
-            // Don't open settings automatically - just log it
         } catch (e: Exception) {
             Log.e("DashMap", "Error setting up media controller", e)
         }
@@ -273,8 +297,8 @@ class MainActivity : ComponentActivity(), LocationListener {
     private fun fetchWeather(lat: Double, lon: Double) {
         Thread {
             try {
-                // Fetch weather data
-                val weatherUrl = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current_weather=true&temperature_unit=celsius&daily=sunrise,sunset&timezone=auto"
+                // Updated URL with hourly precipitation
+                val weatherUrl = "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current_weather=true&hourly=precipitation_probability&temperature_unit=celsius&daily=sunrise,sunset&timezone=auto"
                 val weatherResponse = URL(weatherUrl).readText()
                 val weatherJson = JSONObject(weatherResponse)
 
@@ -293,7 +317,19 @@ class MainActivity : ComponentActivity(), LocationListener {
                     else -> "Partly Cloudy"
                 }
 
-                // Fetch AQI data from Open-Meteo Air Quality API
+                // Get rain chance from hourly data
+                var rainChance = 0
+                try {
+                    val hourly = weatherJson.getJSONObject("hourly")
+                    val precipArray = hourly.getJSONArray("precipitation_probability")
+                    if (precipArray.length() > 0) {
+                        rainChance = precipArray.getInt(0) // Get current hour
+                    }
+                } catch (e: Exception) {
+                    Log.e("DashMap", "Error parsing rain data", e)
+                }
+
+                // Fetch AQI data
                 var aqi = 0
                 var aqiCategory = "Good"
                 try {
@@ -332,7 +368,8 @@ class MainActivity : ComponentActivity(), LocationListener {
                     Log.e("DashMap", "Error getting city name", e)
                 }
 
-                weatherData.value = WeatherData(temp, city, condition, windSpeed, aqi, aqiCategory)
+                weatherData.value = WeatherData(temp, city, condition, windSpeed, aqi, aqiCategory, rainChance)
+                Log.d("DashMap", "Weather updated: $temp°, $condition, Rain: $rainChance%")
             } catch (e: Exception) {
                 Log.e("DashMap", "Error fetching weather", e)
             }
@@ -451,7 +488,8 @@ data class WeatherData(
     val condition: String,
     val windSpeed: Int,
     val aqi: Int = 0,
-    val aqiCategory: String = "Good"
+    val aqiCategory: String = "Good",
+    val rainChance: Int = 0
 )
 
 @Composable
@@ -568,7 +606,14 @@ fun EnhancedWeatherWidget(
     weather: WeatherData?,
     modifier: Modifier = Modifier
 ) {
-    val displayWeather = weather ?: WeatherData(14, "Locating...", "Cloudy", 0, 0, "Good")
+    val displayWeather = weather ?: WeatherData(14, "Locating...", "Cloudy", 0, 0, "Good", 0)
+
+    // Get current date
+    val currentDate = remember {
+        val calendar = java.util.Calendar.getInstance()
+        val dateFormat = java.text.SimpleDateFormat("MMM dd", java.util.Locale.getDefault())
+        dateFormat.format(calendar.time)
+    }
 
     Box(
         modifier = modifier
@@ -586,35 +631,59 @@ fun EnhancedWeatherWidget(
         Row(
             modifier = Modifier.fillMaxSize(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceEvenly
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Left side - City and Temperature
+            // Left side - City, Date and Temperature
             Column(
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.Start
+                verticalArrangement = Arrangement.Top,
+                horizontalAlignment = Alignment.Start,
+                modifier = Modifier.weight(1f)
             ) {
-                Text(
-                    text = displayWeather.city,
-                    color = Color.White,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
+                // City and Date in one row
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = displayWeather.city,
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Temperature
+                    Text(
+                        text = currentDate,
+                        color = Color.White.copy(alpha = 0.55f),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Normal
+                    )
+                }
+                Spacer(modifier = Modifier.height(5.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    // Temperature
+                    Text(
+                        text = "${displayWeather.temperature}°",
+                        color = Color.White,
+                        fontSize = 72.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "${displayWeather.temperature}°",
-                    color = Color.White,
-                    fontSize = 72.sp,
-                    fontWeight = FontWeight.Bold
-                )
             }
 
-            // Middle - Wind speed and AQI with larger text
+            // Middle - Wind speed, AQI, and Rain chance (centered)
             Column(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(horizontal = 16.dp)
+                modifier = Modifier.weight(1f)
             ) {
                 // Wind speed
                 Row(
@@ -663,12 +732,33 @@ fun EnhancedWeatherWidget(
                         )
                     }
                 }
+
+                // Rain chance - always show for testing, or show if > 0
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.WaterDrop,
+                        contentDescription = "Rain",
+                        tint = Color(0xFF64B5F6),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = "${displayWeather.rainChance}% rain",
+                        color = Color.White.copy(alpha = 0.95f),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
 
             // Right side - Icon and Condition
             Column(
                 verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f)
             ) {
                 // Weather icon
                 Icon(
@@ -698,7 +788,6 @@ fun EnhancedWeatherWidget(
         }
     }
 }
-
 @Composable
 fun SpotifyWidget(
     context: Context,
