@@ -34,6 +34,57 @@ import androidx.compose.ui.unit.sp
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
+import kotlin.math.floor
+
+// Moon phase calculation
+fun getMoonPhase(calendar: Calendar): String {
+    val year = calendar.get(Calendar.YEAR)
+    val month = calendar.get(Calendar.MONTH) + 1
+    val day = calendar.get(Calendar.DAY_OF_MONTH)
+
+    var y = year
+    var m = month
+
+    if (m < 3) {
+        y--
+        m += 12
+    }
+
+    val a = floor(y / 100.0)
+    val b = floor(a / 4.0)
+    val c = 2 - a + b
+    val e = floor(365.25 * (y + 4716))
+    val f = floor(30.6001 * (m + 1))
+    val jd = c + day + e + f - 1524.5
+
+    val daysSinceNew = (jd - 2451549.5) % 29.53
+
+    return when {
+        daysSinceNew < 1.84566 -> "New Moon"
+        daysSinceNew < 7.38264 -> "Waxing Crescent"
+        daysSinceNew < 9.22830 -> "First Quarter"
+        daysSinceNew < 14.76528 -> "Waxing Gibbous"
+        daysSinceNew < 16.61094 -> "Full Moon"
+        daysSinceNew < 22.14792 -> "Waning Gibbous"
+        daysSinceNew < 23.99358 -> "Last Quarter"
+        daysSinceNew < 29.53 -> "Waning Crescent"
+        else -> "New Moon"
+    }
+}
+
+fun getMoonEmoji(phase: String): String {
+    return when (phase) {
+        "New Moon" -> "🌑"
+        "Waxing Crescent" -> "🌒"
+        "First Quarter" -> "🌓"
+        "Waxing Gibbous" -> "🌔"
+        "Full Moon" -> "🌕"
+        "Waning Gibbous" -> "🌖"
+        "Last Quarter" -> "🌗"
+        "Waning Crescent" -> "🌘"
+        else -> "🌑"
+    }
+}
 
 @Composable
 fun WeatherWidget(
@@ -42,10 +93,14 @@ fun WeatherWidget(
 ) {
     val displayWeather = weather ?: WeatherData(14, "Locating...", "Cloudy", 0, 0, "Good", 0)
 
-    val currentDate = remember {
+    val (currentDate, isNightTime, moonPhase) = remember {
         val calendar = Calendar.getInstance()
         val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
-        dateFormat.format(calendar.time)
+        val date = dateFormat.format(calendar.time)
+        val hour = calendar.get(Calendar.HOUR_OF_DAY)
+        val isNight = hour >= 19 || hour < 6 // After 7 PM (19:00) or before 6 AM
+        val phase = getMoonPhase(calendar)
+        Triple(date, isNight, phase)
     }
 
     Box(
@@ -53,10 +108,17 @@ fun WeatherWidget(
             .clip(RoundedCornerShape(24.dp))
             .background(
                 Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF5E72A8).copy(alpha = 0.5f),
-                        Color(0xFF4A5C8C).copy(alpha = 0.4f)
-                    )
+                    colors = if (isNightTime) {
+                        listOf(
+                            Color(0xFF1A237E).copy(alpha = 0.6f),
+                            Color(0xFF0D1B4D).copy(alpha = 0.5f)
+                        )
+                    } else {
+                        listOf(
+                            Color(0xFF5E72A8).copy(alpha = 0.5f),
+                            Color(0xFF4A5C8C).copy(alpha = 0.4f)
+                        )
+                    }
                 )
             )
             .padding(10.dp)
@@ -166,37 +228,71 @@ fun WeatherWidget(
                 }
             }
 
-            // Right side - Icon and Condition
+            // Right side - Icon and Condition (with moon phase at night)
             Column(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.weight(1f)
             ) {
-                Icon(
-                    imageVector = when (displayWeather.condition) {
-                        "Clear" -> Icons.Default.WbSunny
-                        "Rainy" -> Icons.Default.WaterDrop
-                        "Snowy" -> Icons.Default.AcUnit
-                        "Stormy" -> Icons.Default.Thunderstorm
-                        "Foggy" -> Icons.Default.Cloud
-                        else -> Icons.Default.Cloud
-                    },
-                    contentDescription = displayWeather.condition,
-                    tint = Color.White.copy(alpha = 0.9f),
-                    modifier = Modifier.size(64.dp)
-                )
+                if (isNightTime) {
+                    // Show moon phase and weather condition
+                    Text(
+                        text = getMoonEmoji(moonPhase),
+                        fontSize = 64.sp
+                    )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
 
-                Text(
-                    text = displayWeather.condition,
-                    color = Color.White.copy(alpha = 0.9f),
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                    // Show weather condition overlay icon if not clear
+                    if (displayWeather.condition != "Clear") {
+                        Icon(
+                            imageVector = when (displayWeather.condition) {
+                                "Rainy" -> Icons.Default.WaterDrop
+                                "Snowy" -> Icons.Default.AcUnit
+                                "Stormy" -> Icons.Default.Thunderstorm
+                                "Foggy" -> Icons.Default.Cloud
+                                else -> Icons.Default.Cloud
+                            },
+                            contentDescription = displayWeather.condition,
+                            tint = Color.White.copy(alpha = 0.9f),
+                            modifier = Modifier.size(32.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+
+                    Text(
+                        text = moonPhase,
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Normal
+                    )
+                } else {
+                    // Daytime - show sun and weather
+                    Icon(
+                        imageVector = when (displayWeather.condition) {
+                            "Clear" -> Icons.Default.WbSunny
+                            "Rainy" -> Icons.Default.WaterDrop
+                            "Snowy" -> Icons.Default.AcUnit
+                            "Stormy" -> Icons.Default.Thunderstorm
+                            "Foggy" -> Icons.Default.Cloud
+                            else -> Icons.Default.Cloud
+                        },
+                        contentDescription = displayWeather.condition,
+                        tint = Color.White.copy(alpha = 0.9f),
+                        modifier = Modifier.size(64.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = displayWeather.condition,
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
         }
     }
 }
-
-// TODO : after dark the sunny should be switched to the current moon phase with the condition on top like if its raining with a full moon aur cloudy with a half moon

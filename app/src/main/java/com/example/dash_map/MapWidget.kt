@@ -20,6 +20,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -115,6 +116,10 @@ import kotlin.math.sqrt
 
 private const val TAG = "MapWidget"
 
+// ============================================================================
+// DATA CLASSES
+// ============================================================================
+
 data class NavigationStep(
     val instruction: String,
     val distance: Double,
@@ -132,6 +137,10 @@ data class NavigationRoute(
     val routePoints: List<Point>
 )
 
+// ============================================================================
+// MAIN COMPOSABLE
+// ============================================================================
+
 @SuppressLint("MissingPermission")
 @Composable
 fun MapWidget(
@@ -143,17 +152,16 @@ fun MapWidget(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    // State management
     var currentLocation by remember { mutableStateOf<Location?>(null) }
     var mapDestination by remember { mutableStateOf(destination) }
     var isNavigating by remember { mutableStateOf(false) }
     var showSearchDialog by remember { mutableStateOf(false) }
     var showRouteOverview by remember { mutableStateOf(false) }
-
     var route by remember { mutableStateOf<NavigationRoute?>(null) }
     var currentStepIndex by remember { mutableStateOf(0) }
     var currentSpeed by remember { mutableStateOf(0f) }
     var distanceToNextStep by remember { mutableStateOf(0.0) }
-
     var hasLocationPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -162,10 +170,10 @@ fun MapWidget(
             ) == PackageManager.PERMISSION_GRANTED
         )
     }
-
     var initialCameraSet by remember { mutableStateOf(false) }
     var styleLoaded by remember { mutableStateOf(false) }
 
+    // Location services
     val fusedLocationClient = remember {
         LocationServices.getFusedLocationProviderClient(context)
     }
@@ -176,7 +184,7 @@ fun MapWidget(
                 locationResult.lastLocation?.let { loc ->
                     Log.d(
                         TAG,
-                        "Location update: ${loc.latitude}, ${loc.longitude}, bearing: ${loc.bearing}"
+                        "Location: ${loc.latitude}, ${loc.longitude}, bearing: ${loc.bearing}"
                     )
                     currentLocation = loc
                     currentSpeed = loc.speed
@@ -185,10 +193,8 @@ fun MapWidget(
                         val currentStep = route!!.steps.getOrNull(currentStepIndex)
                         currentStep?.let { step ->
                             distanceToNextStep = calculateDistance(
-                                loc.latitude,
-                                loc.longitude,
-                                step.location.latitude(),
-                                step.location.longitude()
+                                loc.latitude, loc.longitude,
+                                step.location.latitude(), step.location.longitude()
                             )
 
                             if (distanceToNextStep < 30.0 && currentStepIndex < route!!.steps.size - 1) {
@@ -207,14 +213,12 @@ fun MapWidget(
         hasLocationPermission = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true
     }
 
+    // Effects
     LaunchedEffect(destination) {
         if (destination != null && destination != mapDestination) {
             mapDestination = destination
             currentLocation?.let { loc ->
-                Log.d(
-                    TAG,
-                    "Fetching route from ${loc.latitude},${loc.longitude} to ${destination.latitude},${destination.longitude}"
-                )
+                Log.d(TAG, "Fetching route from ${loc.latitude},${loc.longitude}")
                 route = fetchNavigationRoute(
                     loc.longitude, loc.latitude,
                     destination.longitude, destination.latitude
@@ -227,7 +231,7 @@ fun MapWidget(
     LaunchedEffect(currentLocation, initialCameraSet) {
         if (currentLocation != null && !initialCameraSet) {
             initialCameraSet = true
-            Log.d(TAG, "Initial camera position set")
+            Log.d(TAG, "Initial camera set")
         }
     }
 
@@ -243,7 +247,7 @@ fun MapWidget(
                 locationCallback,
                 Looper.getMainLooper()
             )
-            Log.d(TAG, "Location updates requested")
+            Log.d(TAG, "Location updates started")
         } else {
             locationPermissionLauncher.launch(
                 arrayOf(
@@ -257,509 +261,67 @@ fun MapWidget(
     DisposableEffect(Unit) {
         onDispose {
             fusedLocationClient.removeLocationUpdates(locationCallback)
-            Log.d(TAG, "Location updates removed")
+            Log.d(TAG, "Location updates stopped")
         }
     }
 
+    // UI
     Box(
         modifier = modifier
             .fillMaxSize()
             .clip(RoundedCornerShape(24.dp))
     ) {
         if (!hasLocationPermission) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(androidx.compose.ui.graphics.Color(0xFF000000))
-                    .padding(32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.LocationOff,
-                    contentDescription = "Location Permission",
-                    tint = androidx.compose.ui.graphics.Color.White,
-                    modifier = Modifier.size(64.dp)
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = "Location Permission Required",
-                    color = androidx.compose.ui.graphics.Color.White,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = "Navigation requires access to your location",
-                    color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.7f),
-                    fontSize = 14.sp,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(24.dp))
-                Button(
-                    onClick = {
-                        locationPermissionLauncher.launch(
-                            arrayOf(
-                                Manifest.permission.ACCESS_FINE_LOCATION,
-                                Manifest.permission.ACCESS_COARSE_LOCATION
-                            )
+            LocationPermissionScreen(
+                onRequestPermission = {
+                    locationPermissionLauncher.launch(
+                        arrayOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
                         )
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = androidx.compose.ui.graphics.Color(0xFF007AFF)
                     )
-                ) {
-                    Text("Grant Permission")
                 }
-            }
+            )
         } else {
-            var mapView by remember { mutableStateOf<MapView?>(null) }
-
-            AndroidView(
-                factory = { ctx ->
-                    Log.d(TAG, "Creating MapView")
-                    MapView(ctx).apply {
-                        mapView = this
-
-                        compass.enabled = false
-                        scalebar.enabled = false
-                        logo.updateSettings { enabled = false }
-                        attribution.updateSettings { enabled = false }
-
-                        // Load style
-                        loadStyle(getMapboxMap().style) { style ->
-                            Log.d(TAG, "Map style loaded successfully")
-                            styleLoaded = true
-                            // Make ALL roads dark / neutral
-                            listOf(
-                                "road-primary",
-                                "road-secondary",
-                                "road-tertiary",
-                                "road-street",
-                                "road-minor"
-                            ).forEach { layerId ->
-                                if (style.styleLayerExists(layerId)) {
-                                    style.setStyleLayerProperty(
-                                        layerId,
-                                        "line-color",
-                                        Expression.rgb(18.0, 18.0, 18.0)
-                                    )
-                                    style.setStyleLayerProperty(
-                                        layerId,
-                                        "line-opacity",
-                                        Expression.literal(0.25)
-                                    )
-                                }
-                            }
-                            style.setStyleLayerProperty(
-                                "road-label",
-                                "text-opacity",
-                                Expression.literal(0.0)
-                            )
-                            style.setStyleLayerProperty(
-                                "land",
-                                "background-color",
-                                Expression.rgb(10.0, 10.0, 10.0)
-                            )
-                            style.setStyleLayerProperty(
-                                "poi-label",
-                                "text-opacity",
-                                Expression.literal(0.0)
-                            )
-                            style.styleLayers.forEach { layer ->
-                                if (layer.id.contains("traffic", ignoreCase = true)) {
-                                    style.setStyleLayerProperty(
-                                        layer.id,
-                                        "line-opacity",
-                                        Expression.literal(0.0)
-                                    )
-                                }
-                            }
-
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxSize(),
-                update = { mapViewInstance ->
-                    // Only update if style is loaded
-                    if (!styleLoaded) {
-                        Log.d(TAG, "Waiting for style to load...")
-                        return@AndroidView
-                    }
-
-                    mapViewInstance.mapboxMap.getStyle { style ->
-                        try {
-                            Log.d(
-                                TAG,
-                                "Updating map - Location: $currentLocation, Route points: ${route?.routePoints?.size}"
-                            )
-
-                            // Clear existing annotations
-                            val annotationApi = mapViewInstance.annotations
-                            annotationApi.cleanup()
-
-                            // Add navigation pointer if we have current location
-                            currentLocation?.let { loc ->
-                                try {
-                                    Log.d(
-                                        TAG,
-                                        "Adding navigation pointer at ${loc.latitude}, ${loc.longitude}"
-                                    )
-
-                                    // Create and add pointer image
-                                    val pointerBitmap = createNavigationPointer()
-
-                                    // Remove old image if exists
-                                    if (style.getStyleImage("navigation-pointer") != null) {
-                                        style.removeStyleImage("navigation-pointer")
-                                    }
-
-                                    style.addImage("navigation-pointer", pointerBitmap)
-                                    Log.d(TAG, "Navigation pointer image added to style")
-
-                                    // Create point annotation
-                                    val pointManager = annotationApi.createPointAnnotationManager()
-                                    val locationPoint = PointAnnotationOptions()
-                                        .withPoint(Point.fromLngLat(loc.longitude, loc.latitude))
-                                        .withIconImage("navigation-pointer")
-                                        .withIconRotate(loc.bearing.toDouble())
-                                        .withIconSize(0.8)
-
-                                    val annotation = pointManager.create(locationPoint)
-                                    Log.d(TAG, "Navigation pointer annotation created: $annotation")
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Error adding navigation pointer", e)
-                                }
-
-                                // Update camera
-                                if (isNavigating && !showRouteOverview) {
-                                    mapViewInstance.mapboxMap.setCamera(
-                                        CameraOptions.Builder()
-                                            .zoom(17.2)
-                                            .pitch(48.0)
-                                            .bearing(loc.bearing.toDouble())
-                                            .build()
-                                    )
-                                    Log.d(TAG, "Camera set to navigation mode")
-                                } else if (showRouteOverview && route != null) {
-                                    val points = route!!.routePoints
-                                    if (points.size > 1) {
-                                        val minLat = points.minOf { it.latitude() }
-                                        val maxLat = points.maxOf { it.latitude() }
-                                        val minLon = points.minOf { it.longitude() }
-                                        val maxLon = points.maxOf { it.longitude() }
-
-                                        val centerLat = (minLat + maxLat) / 2
-                                        val centerLon = (minLon + maxLon) / 2
-
-                                        mapViewInstance.mapboxMap.setCamera(
-                                            CameraOptions.Builder()
-                                                .center(
-                                                    Point.fromLngLat(
-                                                        loc.longitude,
-                                                        loc.latitude
-                                                    )
-                                                ) // 👈 ALWAYS YOU
-                                                .zoom(17.8)           // tight like radar view
-                                                .bearing(loc.bearing.toDouble())
-                                                .pitch(45.0)           // flat = clean HUD look
-                                                .build()
-                                        )
-
-
-                                        Log.d(TAG, "Camera set to route overview mode")
-                                    } else {
-                                        Log.d(TAG, "Camera set to route overview mode")
-                                    }
-                                } else {
-                                    mapViewInstance.mapboxMap.setCamera(
-                                        CameraOptions.Builder()
-                                            .center(Point.fromLngLat(loc.longitude, loc.latitude))
-                                            .zoom(17.8)
-                                            .pitch(45.0)
-                                            .build()
-                                    )
-                                    Log.d(TAG, "Camera set to normal mode")
-                                }
-                            }
-
-                            // Draw route line
-                            route?.let { navRoute ->
-                                if (navRoute.routePoints.isNotEmpty()) {
-                                    try {
-                                        Log.d(
-                                            TAG,
-                                            "Drawing route with ${navRoute.routePoints.size} points"
-                                        )
-                                        val polylineManager =
-                                            annotationApi.createPolylineAnnotationManager()
-
-                                        polylineManager.create(
-                                            PolylineAnnotationOptions()
-                                                .withPoints(navRoute.routePoints)
-                                                .withLineWidth(7.0)
-                                                .withLineColor(Color.parseColor("#00B3FF")) // bright cyan
-                                        )
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "Error drawing route", e)
-                                    }
-                                }
-                            }
-
-                            // Draw destination marker
-                            mapDestination?.let { dest ->
-                                try {
-                                    Log.d(
-                                        TAG,
-                                        "Adding destination marker at ${dest.latitude}, ${dest.longitude}"
-                                    )
-
-                                    val destBitmap = createDestinationMarker()
-
-                                    if (style.getStyleImage("dest-marker") != null) {
-                                        style.removeStyleImage("dest-marker")
-                                    }
-                                    style.addImage("dest-marker", destBitmap)
-                                    Log.d(TAG, "Destination marker image added to style")
-
-                                    val pointManager = annotationApi.createPointAnnotationManager()
-                                    val destPoint = PointAnnotationOptions()
-                                        .withPoint(Point.fromLngLat(dest.longitude, dest.latitude))
-                                        .withIconImage("dest-marker")
-
-                                    val annotation = pointManager.create(destPoint)
-                                    Log.d(TAG, "Destination marker annotation created: $annotation")
-                                } catch (e: Exception) {
-                                    Log.e(TAG, "Error adding destination marker", e)
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error in map update", e)
-                        }
-                    }
-                }
+            MapViewComponent(
+                currentLocation = currentLocation,
+                mapDestination = mapDestination,
+                route = route,
+                isNavigating = isNavigating,
+                showRouteOverview = showRouteOverview,
+                styleLoaded = styleLoaded,
+                onStyleLoaded = { styleLoaded = true }
             )
 
             // UI Overlays
             if (!isNavigating) {
-                // Search bar
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(16.dp)
-                        .fillMaxWidth(0.9f)
-                        .height(56.dp)
-                        .shadow(8.dp, RoundedCornerShape(12.dp))
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(androidx.compose.ui.graphics.Color(0xFF1C1C1E))
-                        .clickable { showSearchDialog = true }
-                        .padding(horizontal = 16.dp, vertical = 12.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Search",
-                            tint = androidx.compose.ui.graphics.Color(0xFF8E8E93)
-                        )
-                        Text(
-                            text = mapDestination?.let { "Destination set" }
-                                ?: "Search for a place",
-                            color = androidx.compose.ui.graphics.Color(0xFF8E8E93),
-                            fontSize = 17.sp
-                        )
+                NonNavigationUI(
+                    mapDestination = mapDestination,
+                    route = route,
+                    isNavigating = isNavigating,
+                    onSearchClick = { showSearchDialog = true },
+                    onStartNavigation = {
+                        Log.d(TAG, "Starting navigation")
+                        isNavigating = true
+                        currentStepIndex = 0
+                        showRouteOverview = false
                     }
-                }
-
-                // Start navigation button
-                if (mapDestination != null && route != null) {
-                    Button(
-                        onClick = {
-                            Log.d(TAG, "Starting navigation")
-                            isNavigating = true
-                            currentStepIndex = 0
-                            showRouteOverview = false
-                        },
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(24.dp)
-                            .fillMaxWidth(0.9f)
-                            .height(56.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = androidx.compose.ui.graphics.Color(0xFF007AFF)
-                        ),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Navigation,
-                            contentDescription = "Start Navigation",
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Go", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-
-                // Loading indicator
-                if (mapDestination != null && route == null) {
-                    CircularProgressIndicator(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .size(40.dp),
-                        color = androidx.compose.ui.graphics.Color(0xFF007AFF),
-                        strokeWidth = 3.dp
-                    )
-                }
+                )
             } else {
-                // Navigation UI (same as before)
-                route?.let { navRoute ->
-                    val currentStep = navRoute.steps.getOrNull(currentStepIndex)
-                    val remainingDistance =
-                        navRoute.steps.drop(currentStepIndex).sumOf { it.distance }
-                    val remainingDuration =
-                        navRoute.steps.drop(currentStepIndex).sumOf { it.duration }
-
-                    Column(
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        AnimatedVisibility(
-                            visible = !showRouteOverview,
-                            enter = fadeIn(),
-                            exit = fadeOut()
-                        ) {
-                            Column {
-                                Card(
-                                    modifier = Modifier
-                                        .padding(top = 12.dp, start = 12.dp)
-                                        .fillMaxWidth(0.5f),   // 👈 HALF WIDTH
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = androidx.compose.ui.graphics.Color.Black
-                                    ),
-                                    shape = RoundedCornerShape(14.dp)
-                                ) {
-                                    currentStep?.let { step ->
-                                        Row(
-                                            modifier = Modifier.padding(12.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                getManeuverIcon(
-                                                    step.maneuverType,
-                                                    step.maneuverModifier
-                                                ),
-                                                contentDescription = null,
-                                                tint = androidx.compose.ui.graphics.Color.White,
-                                                modifier = Modifier.size(22.dp)
-                                            )
-
-                                            Spacer(Modifier.width(10.dp))
-
-                                            Column {
-                                                Text(
-                                                    text = formatDistance(distanceToNextStep),
-                                                    fontSize = 20.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    color = androidx.compose.ui.graphics.Color.White
-                                                )
-                                                step.name?.let {
-                                                    Text(
-                                                        text = it,
-                                                        fontSize = 13.sp,
-                                                        color = androidx.compose.ui.graphics.Color(
-                                                            0xFFB0B0B0
-                                                        )
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-
-                                val nextStep = navRoute.steps.getOrNull(currentStepIndex + 1)
-                                nextStep?.let { next ->
-                                    Row(
-                                        modifier = Modifier.padding(start = 24.dp, top = 8.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "Then",
-                                            fontSize = 14.sp,
-                                            color = androidx.compose.ui.graphics.Color(0xFF8E8E93)
-                                        )
-                                        Icon(
-                                            imageVector = getManeuverIcon(
-                                                next.maneuverType,
-                                                next.maneuverModifier
-                                            ),
-                                            contentDescription = "Next",
-                                            tint = androidx.compose.ui.graphics.Color(0xFF8E8E93),
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.weight(1f))
-
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = androidx.compose.ui.graphics.Color.Black
-                            ),
-                            shape = RoundedCornerShape(18.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column {
-                                    Text(
-                                        formatDuration(remainingDuration),
-                                        fontSize = 22.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = androidx.compose.ui.graphics.Color.White
-                                    )
-                                    Text(
-                                        formatDistance(remainingDistance),
-                                        fontSize = 13.sp,
-                                        color = androidx.compose.ui.graphics.Color(0xFFB0B0B0)
-                                    )
-                                }
-
-                                Spacer(Modifier.weight(1f))
-
-                                IconButton(onClick = { showRouteOverview = !showRouteOverview }) {
-                                    Icon(
-                                        Icons.Default.Route,
-                                        null,
-                                        tint = androidx.compose.ui.graphics.Color.White
-                                    )
-                                }
-
-                                IconButton(onClick = {
-                                    isNavigating = false
-                                    route = null
-                                }) {
-                                    Icon(
-                                        Icons.Default.Close,
-                                        null,
-                                        tint = androidx.compose.ui.graphics.Color.Red
-                                    )
-                                }
-                            }
-                        }
-
-
-
+                NavigationUI(
+                    route = route,
+                    currentStepIndex = currentStepIndex,
+                    distanceToNextStep = distanceToNextStep,
+                    showRouteOverview = showRouteOverview,
+                    onToggleOverview = { showRouteOverview = !showRouteOverview },
+                    onStopNavigation = {
+                        isNavigating = false
+                        currentStepIndex = 0
+                        route = null
+                        mapDestination = null
+                        showRouteOverview = false
                     }
-                }
+                )
             }
 
             if (showSearchDialog) {
@@ -786,253 +348,373 @@ fun MapWidget(
     }
 }
 
-// Rest of the helper functions remain the same...
-fun getManeuverIcon(
-    type: String,
-    modifier: String?
-): androidx.compose.ui.graphics.vector.ImageVector {
-    return when (type) {
-        "turn" -> when (modifier) {
-            "left" -> Icons.Default.TurnLeft
-            "right" -> Icons.Default.TurnRight
-            "slight left" -> Icons.Default.TurnSlightLeft
-            "slight right" -> Icons.Default.TurnSlightRight
-            "sharp left" -> Icons.Default.TurnSharpLeft
-            "sharp right" -> Icons.Default.TurnSharpRight
-            else -> Icons.Default.ArrowUpward
+// ============================================================================
+// UI COMPONENTS
+// ============================================================================
+
+@Composable
+fun LocationPermissionScreen(onRequestPermission: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(androidx.compose.ui.graphics.Color(0xFF000000))
+            .padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(
+            imageVector = Icons.Default.LocationOff,
+            contentDescription = "Location Permission",
+            tint = androidx.compose.ui.graphics.Color.White,
+            modifier = Modifier.size(64.dp)
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "Location Permission Required",
+            color = androidx.compose.ui.graphics.Color.White,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Navigation requires access to your location",
+            color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.7f),
+            fontSize = 14.sp,
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(24.dp))
+        Button(
+            onClick = onRequestPermission,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = androidx.compose.ui.graphics.Color(0xFF007AFF)
+            )
+        ) {
+            Text("Grant Permission")
         }
-        "merge" -> Icons.Default.MergeType
-        "roundabout", "rotary" -> Icons.Default.RotateRight
-        "arrive" -> Icons.Default.Place
-        "depart" -> Icons.Default.DirectionsCar
-        "fork" -> Icons.Default.ForkLeft
-        "off ramp", "ramp" -> Icons.Default.RampRight
-        else -> Icons.Default.ArrowUpward
     }
 }
 
-fun formatDistance(meters: Double): String {
-    return if (meters >= 1000) {
-        String.format("%.1f km", meters / 1000)
-    } else {
-        String.format("%.0f m", meters)
-    }
-}
+@Composable
+fun MapViewComponent(
+    currentLocation: Location?,
+    mapDestination: GeoPoint?,
+    route: NavigationRoute?,
+    isNavigating: Boolean,
+    showRouteOverview: Boolean,
+    styleLoaded: Boolean,
+    onStyleLoaded: () -> Unit
+) {
+    var mapView by remember { mutableStateOf<MapView?>(null) }
 
-fun formatDuration(seconds: Double): String {
-    val minutes = (seconds / 60).toInt()
-    return if (minutes >= 60) {
-        val hours = minutes / 60
-        val mins = minutes % 60
-        if (mins > 0) "$hours hr $mins min" else "$hours hr"
-    } else {
-        "$minutes min"
-    }
-}
+    AndroidView(
+        factory = { ctx ->
+            Log.d(TAG, "Creating MapView")
+            MapView(ctx).apply {
+                mapView = this
 
+                compass.enabled = false
+                scalebar.enabled = false
+                logo.updateSettings { enabled = false }
+                attribution.updateSettings { enabled = false }
 
-fun createNavigationPointer(): Bitmap {
-    val size = 120
-    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
+                loadStyle(getMapboxMap().style) { style ->
+                    Log.d(TAG, "Map style loaded")
+                    onStyleLoaded()
 
-    // Fill (neon green)
-    val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#39FF14") // neon green
-        style = Paint.Style.FILL
-    }
+                    // Darker background and roads
+                    style.setStyleLayerProperty(
+                        "land",
+                        "background-color",
+                        Expression.rgb(5.0, 5.0, 5.0)
+                    )
 
-    // Thin black outline
-    val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.BLACK
-        style = Paint.Style.STROKE
-        strokeWidth = 20f   // VERY thin border
-    }
-
-    val path = Path().apply {
-        moveTo(size / 2f, 8f)               // tip
-        lineTo(size - 22f, size - 28f)      // right
-        lineTo(size / 2f, size - 42f)       // notch
-        lineTo(22f, size - 28f)             // left
-        close()
-    }
-
-    canvas.drawPath(path, strokePaint)
-    canvas.drawPath(path, fillPaint)
-
-    return bitmap
-}
-
-
-// Create destination marker
-fun createDestinationMarker(): Bitmap {
-    val size = 100
-    val bitmap =
-        Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
-
-    val paint = Paint().apply {
-        isAntiAlias = true
-        style = android.graphics.Paint.Style.FILL
-    }
-
-    val centerX = size / 2f
-    val centerY = size / 2f
-
-    // Red pin with glow
-    paint.color = Color.parseColor("#FF3B30")
-    paint.setShadowLayer(10f, 0f, 0f, Color.parseColor("#FF3B30"))
-
-    // Draw pin shape
-    canvas.drawCircle(centerX, centerY - 15f, 18f, paint)
-
-    val pinPath = Path()
-    pinPath.moveTo(centerX, centerY + 25f) // Bottom point
-    pinPath.lineTo(centerX - 15f, centerY - 5f) // Left
-    pinPath.arcTo(centerX - 18f, centerY - 33f, centerX + 18f, centerY + 3f, 180f, -180f, false)
-    pinPath.lineTo(centerX + 15f, centerY - 5f) // Right
-    pinPath.close()
-
-    canvas.drawPath(pinPath, paint)
-
-    // White center
-    paint.color = Color.WHITE
-    paint.clearShadowLayer()
-    canvas.drawCircle(centerX, centerY - 15f, 8f, paint)
-
-    return bitmap
-}
-
-fun calculateDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
-    val r = 6371000.0
-    val dLat = Math.toRadians(lat2 - lat1)
-    val dLon = Math.toRadians(lon2 - lon1)
-    val a = sin(dLat / 2) * sin(dLat / 2) +
-            cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
-            sin(dLon / 2) * sin(dLon / 2)
-    val c = 2 * atan2(sqrt(a), sqrt(1 - a))
-    return r * c
-}
-
-suspend fun fetchNavigationRoute(
-    startLon: Double,
-    startLat: Double,
-    endLon: Double,
-    endLat: Double
-): NavigationRoute? {
-    return withContext(Dispatchers.IO) {
-        try {
-            val accessToken = com.mapbox.common.MapboxOptions.accessToken
-
-            val url = "https://api.mapbox.com/directions/v5/mapbox/driving/" +
-                    "$startLon,$startLat;$endLon,$endLat?" +
-                    "steps=true&" +
-                    "geometries=geojson&" +
-                    "overview=full&" +
-                    "banner_instructions=true&" +
-                    "voice_instructions=true&" +
-                    "access_token=$accessToken"
-
-            val response = URL(url).readText()
-            val json = JSONObject(response)
-
-            val routes = json.getJSONArray("routes")
-            if (routes.length() > 0) {
-                val route = routes.getJSONObject(0)
-
-                val totalDistance = route.getDouble("distance")
-                val totalDuration = route.getDouble("duration")
-
-                val geometry = route.getJSONObject("geometry")
-                val coordinates = geometry.getJSONArray("coordinates")
-                val routePoints = mutableListOf<Point>()
-                for (i in 0 until coordinates.length()) {
-                    val coord = coordinates.getJSONArray(i)
-                    routePoints.add(Point.fromLngLat(coord.getDouble(0), coord.getDouble(1)))
-                }
-
-                val legs = route.getJSONArray("legs")
-                val steps = mutableListOf<NavigationStep>()
-
-                for (i in 0 until legs.length()) {
-                    val leg = legs.getJSONObject(i)
-                    val legSteps = leg.getJSONArray("steps")
-
-                    for (j in 0 until legSteps.length()) {
-                        val step = legSteps.getJSONObject(j)
-                        val maneuver = step.getJSONObject("maneuver")
-
-                        val instruction = maneuver.optString("instruction", "Continue")
-                        val distance = step.getDouble("distance")
-                        val duration = step.getDouble("duration")
-                        val maneuverType = maneuver.getString("type")
-                        val maneuverModifier = maneuver.optString("modifier", null)
-                        val roadName = step.optString("name", null)
-
-                        val location = maneuver.getJSONArray("location")
-                        val stepLocation = Point.fromLngLat(
-                            location.getDouble(0),
-                            location.getDouble(1)
-                        )
-
-                        steps.add(
-                            NavigationStep(
-                                instruction = instruction,
-                                distance = distance,
-                                duration = duration,
-                                maneuverType = maneuverType,
-                                maneuverModifier = maneuverModifier,
-                                location = stepLocation,
-                                name = roadName
+                    listOf(
+                        "road-primary",
+                        "road-secondary",
+                        "road-tertiary",
+                        "road-street",
+                        "road-minor"
+                    ).forEach { layerId ->
+                        if (style.styleLayerExists(layerId)) {
+                            style.setStyleLayerProperty(
+                                layerId,
+                                "line-color",
+                                Expression.rgb(12.0, 12.0, 12.0)
                             )
+                            style.setStyleLayerProperty(
+                                layerId,
+                                "line-opacity",
+                                Expression.literal(0.2)
+                            )
+                        }
+                    }
+
+                    style.setStyleLayerProperty(
+                        "road-label",
+                        "text-opacity",
+                        Expression.literal(0.0)
+                    )
+                    style.setStyleLayerProperty(
+                        "poi-label",
+                        "text-opacity",
+                        Expression.literal(0.0)
+                    )
+
+                    style.styleLayers.forEach { layer ->
+                        if (layer.id.contains("traffic", ignoreCase = true)) {
+                            style.setStyleLayerProperty(
+                                layer.id,
+                                "line-opacity",
+                                Expression.literal(0.0)
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        modifier = Modifier.fillMaxSize(),
+        update = { mapViewInstance ->
+            if (!styleLoaded) return@AndroidView
+
+            mapViewInstance.mapboxMap.getStyle { style ->
+                try {
+                    val annotationApi = mapViewInstance.annotations
+                    annotationApi.cleanup()
+
+                    currentLocation?.let { loc ->
+                        addNavigationPointer(style, annotationApi, loc)
+                        updateCamera(mapViewInstance, loc, isNavigating, showRouteOverview, route)
+                    }
+
+                    route?.let { navRoute ->
+                        if (navRoute.routePoints.isNotEmpty()) {
+                            drawRoute(annotationApi, navRoute.routePoints)
+                        }
+                    }
+
+                    mapDestination?.let { dest ->
+                        addDestinationMarker(style, annotationApi, dest)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Map update error", e)
+                }
+            }
+        }
+    )
+}
+
+@Composable
+fun BoxScope.NonNavigationUI(
+    mapDestination: GeoPoint?,
+    route: NavigationRoute?,
+    isNavigating: Boolean,
+    onSearchClick: () -> Unit,
+    onStartNavigation: () -> Unit
+) {
+    // Search bar
+    Box(
+        modifier = Modifier
+            .align(Alignment.TopCenter)
+            .padding(16.dp)
+            .fillMaxWidth(0.9f)
+            .height(56.dp)
+            .shadow(8.dp, RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(12.dp))
+            .background(androidx.compose.ui.graphics.Color(0xFF1C1C1E))
+            .clickable { onSearchClick() }
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Search,
+                contentDescription = "Search",
+                tint = androidx.compose.ui.graphics.Color(0xFF8E8E93)
+            )
+            Text(
+                text = mapDestination?.let { "Destination set" } ?: "Search for a place",
+                color = androidx.compose.ui.graphics.Color(0xFF8E8E93),
+                fontSize = 17.sp
+            )
+        }
+    }
+
+    // Start navigation button
+    if (mapDestination != null && route != null) {
+        Button(
+            onClick = onStartNavigation,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(24.dp)
+                .fillMaxWidth(0.9f)
+                .height(56.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = androidx.compose.ui.graphics.Color(0xFF007AFF)
+            ),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Navigation,
+                contentDescription = "Start Navigation",
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text("Go", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+
+    // Loading indicator - only show when destination is set but no route yet
+    if (mapDestination != null && route == null && !isNavigating) {
+        CircularProgressIndicator(
+            modifier = Modifier
+                .align(Alignment.Center)
+                .size(40.dp),
+            color = androidx.compose.ui.graphics.Color(0xFF007AFF),
+            strokeWidth = 3.dp
+        )
+    }
+}
+
+@Composable
+fun NavigationUI(
+    route: NavigationRoute?,
+    currentStepIndex: Int,
+    distanceToNextStep: Double,
+    showRouteOverview: Boolean,
+    onToggleOverview: () -> Unit,
+    onStopNavigation: () -> Unit
+) {
+    route?.let { navRoute ->
+        val currentStep = navRoute.steps.getOrNull(currentStepIndex)
+        val remainingDistance = navRoute.steps.drop(currentStepIndex).sumOf { it.distance }
+        val remainingDuration = navRoute.steps.drop(currentStepIndex).sumOf { it.duration }
+
+        Column(modifier = Modifier.fillMaxSize()) {
+            AnimatedVisibility(
+                visible = !showRouteOverview,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
+                Column {
+                    // Current step card
+                    Card(
+                        modifier = Modifier
+                            .padding(top = 12.dp, start = 12.dp)
+                            .fillMaxWidth(0.5f),
+                        colors = CardDefaults.cardColors(
+                            containerColor = androidx.compose.ui.graphics.Color.Black
+                        ),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        currentStep?.let { step ->
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    getManeuverIcon(step.maneuverType, step.maneuverModifier),
+                                    contentDescription = null,
+                                    tint = androidx.compose.ui.graphics.Color.White,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = formatDistance(distanceToNextStep),
+                                        fontSize = 20.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = androidx.compose.ui.graphics.Color.White
+                                    )
+                                    step.name?.let {
+                                        Text(
+                                            text = it,
+                                            fontSize = 13.sp,
+                                            color = androidx.compose.ui.graphics.Color(0xFFB0B0B0)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Next step preview
+                    val nextStep = navRoute.steps.getOrNull(currentStepIndex + 1)
+                    nextStep?.let { next ->
+                        Row(
+                            modifier = Modifier.padding(start = 24.dp, top = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Then",
+                                fontSize = 14.sp,
+                                color = androidx.compose.ui.graphics.Color(0xFF8E8E93)
+                            )
+                            Icon(
+                                imageVector = getManeuverIcon(
+                                    next.maneuverType,
+                                    next.maneuverModifier
+                                ),
+                                contentDescription = "Next",
+                                tint = androidx.compose.ui.graphics.Color(0xFF8E8E93),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            // Bottom control card
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = androidx.compose.ui.graphics.Color.Black
+                ),
+                shape = RoundedCornerShape(18.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            formatDuration(remainingDuration),
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = androidx.compose.ui.graphics.Color.White
+                        )
+                        Text(
+                            formatDistance(remainingDistance),
+                            fontSize = 13.sp,
+                            color = androidx.compose.ui.graphics.Color(0xFFB0B0B0)
+                        )
+                    }
+
+                    Spacer(Modifier.weight(1f))
+
+                    IconButton(onClick = onToggleOverview) {
+                        Icon(
+                            Icons.Default.Route,
+                            null,
+                            tint = androidx.compose.ui.graphics.Color.White
+                        )
+                    }
+
+                    IconButton(onClick = onStopNavigation) {
+                        Icon(
+                            Icons.Default.Close,
+                            null,
+                            tint = androidx.compose.ui.graphics.Color.Red
                         )
                     }
                 }
-
-                NavigationRoute(
-                    steps = steps,
-                    totalDistance = totalDistance,
-                    totalDuration = totalDuration,
-                    routePoints = routePoints
-                )
-            } else {
-                null
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
-        }
-    }
-}
-
-suspend fun geocodeLocation(query: String): Pair<Double, Double>? {
-    return withContext(Dispatchers.IO) {
-        try {
-            val accessToken = com.mapbox.common.MapboxOptions.accessToken
-            val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
-
-            val url = "https://api.mapbox.com/geocoding/v5/mapbox.places/" +
-                    "$encodedQuery.json?" +
-                    "access_token=$accessToken&" +
-                    "limit=1"
-
-            val response = URL(url).readText()
-            val json = JSONObject(response)
-
-            val features = json.getJSONArray("features")
-            if (features.length() > 0) {
-                val feature = features.getJSONObject(0)
-                val geometry = feature.getJSONObject("geometry")
-                val coordinates = geometry.getJSONArray("coordinates")
-                val lon = coordinates.getDouble(0)
-                val lat = coordinates.getDouble(1)
-                Pair(lat, lon)
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
         }
     }
 }
@@ -1059,9 +741,7 @@ fun DestinationSearchDialog(
                 .background(androidx.compose.ui.graphics.Color(0xFF1C1C1E))
                 .padding(24.dp)
         ) {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1073,11 +753,10 @@ fun DestinationSearchDialog(
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold
                     )
-
                     IconButton(onClick = onDismiss) {
                         Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
+                            Icons.Default.Close,
+                            "Close",
                             tint = androidx.compose.ui.graphics.Color.White
                         )
                     }
@@ -1105,9 +784,7 @@ fun DestinationSearchDialog(
                         onValueChange = { searchQuery = it },
                         label = { Text("Search location") },
                         placeholder = { Text("Enter place name") },
-                        leadingIcon = {
-                            Icon(Icons.Default.Search, "Search")
-                        },
+                        leadingIcon = { Icon(Icons.Default.Search, "Search") },
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(
@@ -1246,6 +923,366 @@ fun DestinationSearchDialog(
                     }
                 }
             }
+        }
+    }
+}
+
+// ============================================================================
+// MAP HELPER FUNCTIONS
+// ============================================================================
+
+fun addNavigationPointer(
+    style: com.mapbox.maps.Style,
+    annotationApi: com.mapbox.maps.plugin.annotation.AnnotationPlugin,
+    loc: Location
+) {
+    try {
+        val pointerBitmap = createNavigationPointer()
+
+        if (style.getStyleImage("navigation-pointer") != null) {
+            style.removeStyleImage("navigation-pointer")
+        }
+
+        style.addImage("navigation-pointer", pointerBitmap)
+
+        val pointManager = annotationApi.createPointAnnotationManager()
+        val locationPoint = PointAnnotationOptions()
+            .withPoint(Point.fromLngLat(loc.longitude, loc.latitude))
+            .withIconImage("navigation-pointer")
+            .withIconRotate(loc.bearing.toDouble())
+            .withIconSize(0.8)
+
+        pointManager.create(locationPoint)
+    } catch (e: Exception) {
+        Log.e(TAG, "Error adding navigation pointer", e)
+    }
+}
+
+fun addDestinationMarker(
+    style: com.mapbox.maps.Style,
+    annotationApi: com.mapbox.maps.plugin.annotation.AnnotationPlugin,
+    dest: GeoPoint
+) {
+    try {
+        val destBitmap = createDestinationMarker()
+
+        if (style.getStyleImage("dest-marker") != null) {
+            style.removeStyleImage("dest-marker")
+        }
+
+        style.addImage("dest-marker", destBitmap)
+
+        val pointManager = annotationApi.createPointAnnotationManager()
+        val destPoint = PointAnnotationOptions()
+            .withPoint(Point.fromLngLat(dest.longitude, dest.latitude))
+            .withIconImage("dest-marker")
+
+        pointManager.create(destPoint)
+    } catch (e: Exception) {
+        Log.e(TAG, "Error adding destination marker", e)
+    }
+}
+
+fun drawRoute(
+    annotationApi: com.mapbox.maps.plugin.annotation.AnnotationPlugin,
+    routePoints: List<Point>
+) {
+    try {
+        val polylineManager = annotationApi.createPolylineAnnotationManager()
+        polylineManager.create(
+            PolylineAnnotationOptions()
+                .withPoints(routePoints)
+                .withLineWidth(7.0)
+                .withLineColor(Color.parseColor("#00B3FF"))
+        )
+    } catch (e: Exception) {
+        Log.e(TAG, "Error drawing route", e)
+    }
+}
+
+fun updateCamera(
+    mapView: MapView,
+    loc: Location,
+    isNavigating: Boolean,
+    showRouteOverview: Boolean,
+    route: NavigationRoute?
+) {
+    if (isNavigating && !showRouteOverview) {
+        // Calculate offset position behind the user
+        val offsetDistance = 0.0008 // ~90 meters behind in degrees
+        val bearing = Math.toRadians(loc.bearing.toDouble())
+
+        // Calculate the point behind the user
+        val offsetLat = loc.latitude - (offsetDistance * cos(bearing))
+        val offsetLon = loc.longitude - (offsetDistance * sin(bearing))
+
+        mapView.mapboxMap.setCamera(
+            CameraOptions.Builder()
+                .center(Point.fromLngLat(offsetLon, offsetLat))
+                .zoom(17.2)
+                .pitch(55.0) // Slightly higher pitch for better forward view
+                .bearing(loc.bearing.toDouble())
+                .build()
+        )
+    } else if (showRouteOverview && route != null) {
+        mapView.mapboxMap.setCamera(
+            CameraOptions.Builder()
+                .center(Point.fromLngLat(loc.longitude, loc.latitude))
+                .zoom(17.8)
+                .bearing(loc.bearing.toDouble())
+                .pitch(45.0)
+                .build()
+        )
+    } else {
+        mapView.mapboxMap.setCamera(
+            CameraOptions.Builder()
+                .center(Point.fromLngLat(loc.longitude, loc.latitude))
+                .zoom(17.8)
+                .pitch(45.0)
+                .build()
+        )
+    }
+}
+
+// ============================================================================
+// GRAPHICS FUNCTIONS
+// ============================================================================
+
+fun createNavigationPointer(): Bitmap {
+    val size = 120
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+
+    val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#39FF14")
+        style = Paint.Style.FILL
+    }
+
+    val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.BLACK
+        style = Paint.Style.STROKE
+        strokeWidth = 20f
+    }
+
+    val path = Path().apply {
+        moveTo(size / 2f, 8f)
+        lineTo(size - 22f, size - 28f)
+        lineTo(size / 2f, size - 42f)
+        lineTo(22f, size - 28f)
+        close()
+    }
+
+    canvas.drawPath(path, strokePaint)
+    canvas.drawPath(path, fillPaint)
+
+    return bitmap
+}
+
+fun createDestinationMarker(): Bitmap {
+    val size = 100
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+
+    val paint = Paint().apply {
+        isAntiAlias = true
+        style = Paint.Style.FILL
+    }
+
+    val centerX = size / 2f
+    val centerY = size / 2f
+
+    paint.color = Color.parseColor("#FF3B30")
+    paint.setShadowLayer(10f, 0f, 0f, Color.parseColor("#FF3B30"))
+
+    canvas.drawCircle(centerX, centerY - 15f, 18f, paint)
+
+    val pinPath = Path()
+    pinPath.moveTo(centerX, centerY + 25f)
+    pinPath.lineTo(centerX - 15f, centerY - 5f)
+    pinPath.arcTo(centerX - 18f, centerY - 33f, centerX + 18f, centerY + 3f, 180f, -180f, false)
+    pinPath.lineTo(centerX + 15f, centerY - 5f)
+    pinPath.close()
+
+    canvas.drawPath(pinPath, paint)
+
+    paint.color = Color.WHITE
+    paint.clearShadowLayer()
+    canvas.drawCircle(centerX, centerY - 15f, 8f, paint)
+
+    return bitmap
+}
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+fun getManeuverIcon(
+    type: String,
+    modifier: String?
+): androidx.compose.ui.graphics.vector.ImageVector {
+    return when (type) {
+        "turn" -> when (modifier) {
+            "left" -> Icons.Default.TurnLeft
+            "right" -> Icons.Default.TurnRight
+            "slight left" -> Icons.Default.TurnSlightLeft
+            "slight right" -> Icons.Default.TurnSlightRight
+            "sharp left" -> Icons.Default.TurnSharpLeft
+            "sharp right" -> Icons.Default.TurnSharpRight
+            else -> Icons.Default.ArrowUpward
+        }
+
+        "merge" -> Icons.Default.MergeType
+        "roundabout", "rotary" -> Icons.Default.RotateRight
+        "arrive" -> Icons.Default.Place
+        "depart" -> Icons.Default.DirectionsCar
+        "fork" -> Icons.Default.ForkLeft
+        "off ramp", "ramp" -> Icons.Default.RampRight
+        else -> Icons.Default.ArrowUpward
+    }
+}
+
+fun formatDistance(meters: Double): String {
+    return if (meters >= 1000) {
+        String.format("%.1f km", meters / 1000)
+    } else {
+        String.format("%.0f m", meters)
+    }
+}
+
+fun formatDuration(seconds: Double): String {
+    val minutes = (seconds / 60).toInt()
+    return if (minutes >= 60) {
+        val hours = minutes / 60
+        val mins = minutes % 60
+        if (mins > 0) "$hours hr $mins min" else "$hours hr"
+    } else {
+        "$minutes min"
+    }
+}
+
+fun calculateDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+    val r = 6371000.0
+    val dLat = Math.toRadians(lat2 - lat1)
+    val dLon = Math.toRadians(lon2 - lon1)
+    val a = sin(dLat / 2) * sin(dLat / 2) +
+            cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
+            sin(dLon / 2) * sin(dLon / 2)
+    val c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    return r * c
+}
+
+// ============================================================================
+// API FUNCTIONS
+// ============================================================================
+
+suspend fun fetchNavigationRoute(
+    startLon: Double,
+    startLat: Double,
+    endLon: Double,
+    endLat: Double
+): NavigationRoute? {
+    return withContext(Dispatchers.IO) {
+        try {
+            val accessToken = com.mapbox.common.MapboxOptions.accessToken
+            val url = "https://api.mapbox.com/directions/v5/mapbox/driving/" +
+                    "$startLon,$startLat;$endLon,$endLat?" +
+                    "steps=true&geometries=geojson&overview=full&" +
+                    "banner_instructions=true&voice_instructions=true&" +
+                    "access_token=$accessToken"
+
+            val response = URL(url).readText()
+            val json = JSONObject(response)
+            val routes = json.getJSONArray("routes")
+
+            if (routes.length() > 0) {
+                val route = routes.getJSONObject(0)
+                val totalDistance = route.getDouble("distance")
+                val totalDuration = route.getDouble("duration")
+
+                val geometry = route.getJSONObject("geometry")
+                val coordinates = geometry.getJSONArray("coordinates")
+                val routePoints = mutableListOf<Point>()
+
+                for (i in 0 until coordinates.length()) {
+                    val coord = coordinates.getJSONArray(i)
+                    routePoints.add(Point.fromLngLat(coord.getDouble(0), coord.getDouble(1)))
+                }
+
+                val legs = route.getJSONArray("legs")
+                val steps = mutableListOf<NavigationStep>()
+
+                for (i in 0 until legs.length()) {
+                    val leg = legs.getJSONObject(i)
+                    val legSteps = leg.getJSONArray("steps")
+
+                    for (j in 0 until legSteps.length()) {
+                        val step = legSteps.getJSONObject(j)
+                        val maneuver = step.getJSONObject("maneuver")
+
+                        val instruction = maneuver.optString("instruction", "Continue")
+                        val distance = step.getDouble("distance")
+                        val duration = step.getDouble("duration")
+                        val maneuverType = maneuver.getString("type")
+                        val maneuverModifier = maneuver.optString("modifier", null)
+                        val roadName = step.optString("name", null)
+
+                        val location = maneuver.getJSONArray("location")
+                        val stepLocation =
+                            Point.fromLngLat(location.getDouble(0), location.getDouble(1))
+
+                        steps.add(
+                            NavigationStep(
+                                instruction = instruction,
+                                distance = distance,
+                                duration = duration,
+                                maneuverType = maneuverType,
+                                maneuverModifier = maneuverModifier,
+                                location = stepLocation,
+                                name = roadName
+                            )
+                        )
+                    }
+                }
+
+                NavigationRoute(
+                    steps = steps,
+                    totalDistance = totalDistance,
+                    totalDuration = totalDuration,
+                    routePoints = routePoints
+                )
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching route", e)
+            null
+        }
+    }
+}
+
+suspend fun geocodeLocation(query: String): Pair<Double, Double>? {
+    return withContext(Dispatchers.IO) {
+        try {
+            val accessToken = com.mapbox.common.MapboxOptions.accessToken
+            val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+            val url = "https://api.mapbox.com/geocoding/v5/mapbox.places/" +
+                    "$encodedQuery.json?access_token=$accessToken&limit=1"
+
+            val response = URL(url).readText()
+            val json = JSONObject(response)
+            val features = json.getJSONArray("features")
+
+            if (features.length() > 0) {
+                val feature = features.getJSONObject(0)
+                val geometry = feature.getJSONObject("geometry")
+                val coordinates = geometry.getJSONArray("coordinates")
+                Pair(coordinates.getDouble(1), coordinates.getDouble(0))
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error geocoding", e)
+            null
         }
     }
 }
