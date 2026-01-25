@@ -21,6 +21,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
+import com.mapbox.common.MapboxOptions
 import org.osmdroid.config.Configuration
 import org.osmdroid.util.GeoPoint
 
@@ -52,6 +53,9 @@ class MainActivity : ComponentActivity(), LocationListener {
         super.onCreate(savedInstanceState)
 
         try {
+            // Set Mapbox access token
+            MapboxOptions.accessToken = getString(R.string.mapbox_access_token)
+
             Configuration.getInstance().load(
                 applicationContext,
                 getSharedPreferences("osm_prefs", MODE_PRIVATE)

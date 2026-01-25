@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">DASH_MAP</string>
+    <string name="mapbox_access_token">pk.eyJ1IjoibW9yZWhhcnNoIiwiYSI6ImNta3NvMXhxZjFhaWozcHM5aXN1djR0cWwifQ.rR-_aom1qzeqdlgtt04Xpw</string>
 </resources>

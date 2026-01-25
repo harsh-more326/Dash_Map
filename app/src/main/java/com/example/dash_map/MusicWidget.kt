@@ -2,6 +2,7 @@ package com.example.dash_map
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,8 +31,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -48,29 +51,59 @@ fun MusicWidget(
     isPlaying: Boolean,
     songTitle: String,
     songArtist: String,
-    albumArtBitmap: android.graphics.Bitmap?,
+    albumArtBitmap: Bitmap?,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val hasSong = songTitle != "No song playing"
+    val albumArtImage = remember(albumArtBitmap) {
+        albumArtBitmap?.asImageBitmap()
+    }
 
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(24.dp))
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF1DB954),
-                        Color(0xFF1AA34A)
-                    )
-                )
-            )
-            .padding(20.dp)
     ) {
+        // Background - Blurred album art or gradient
+        if (albumArtImage != null) {
+            // Blurred album art background
+            Image(
+                bitmap = albumArtImage,
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(30.dp),
+                contentScale = ContentScale.Crop
+            )
+            // Dark overlay for better text contrast
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.5f))
+            )
+        } else {
+            // Fallback gradient background
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFF1DB954),
+                                Color(0xFF1AA34A)
+                            )
+                        )
+                    )
+            )
+        }
+
+        // Content
         Row(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(20.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -80,12 +113,12 @@ fun MusicWidget(
                     .weight(0.35f)
                     .fillMaxHeight()
                     .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFF0D7A3A)),
+                    .background(Color.Black.copy(alpha = 0.3f)),
                 contentAlignment = Alignment.Center
             ) {
-                if (albumArtBitmap != null) {
+                if (albumArtImage != null) {
                     Image(
-                        bitmap = albumArtBitmap.asImageBitmap(),
+                        bitmap = albumArtImage,
                         contentDescription = "Album Art",
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
@@ -190,7 +223,9 @@ fun MusicWidget(
                         Icon(
                             imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = if (isPlaying) "Pause" else "Play",
-                            tint = Color(0xFF1DB954),
+                            tint = if (albumArtImage != null) Color(0xFF1DB954) else Color(
+                                0xFF1DB954
+                            ),
                             modifier = Modifier.size(36.dp)
                         )
                     }

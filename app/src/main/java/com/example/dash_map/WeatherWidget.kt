@@ -59,7 +59,7 @@ fun WeatherWidget(
                     )
                 )
             )
-            .padding(20.dp)
+            .padding(10.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxSize(),
@@ -85,8 +85,6 @@ fun WeatherWidget(
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Normal
                 )
-
-                Spacer(modifier = Modifier.height(5.dp))
 
                 Text(
                     text = "${displayWeather.temperature}°",
@@ -200,3 +198,5 @@ fun WeatherWidget(
         }
     }
 }
+
+// TODO : after dark the sunny should be switched to the current moon phase with the condition on top like if its raining with a full moon aur cloudy with a half moon

@@ -10,17 +10,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DoNotDisturb
-import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -44,6 +39,7 @@ fun DashMapScreen(
     onPrevious: () -> Unit
 ) {
     var isDNDEnabled by remember { mutableStateOf(true) }
+    var mapDestination by remember { mutableStateOf<GeoPoint?>(null) }
 
     LaunchedEffect(Unit) {
         onEnableDND()
@@ -99,6 +95,7 @@ fun DashMapScreen(
 
             MapWidget(
                 location = location,
+                destination = mapDestination,
                 onOpenMaps = onOpenGoogleMaps,
                 modifier = Modifier
                     .weight(1f)
@@ -106,16 +103,6 @@ fun DashMapScreen(
             )
         }
 
-        if (isDNDEnabled) {
-            Icon(
-                imageVector = Icons.Default.DoNotDisturb,
-                contentDescription = "DND Active",
-                tint = Color.White,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(24.dp)
-                    .size(28.dp)
-            )
-        }
+
     }
 }
