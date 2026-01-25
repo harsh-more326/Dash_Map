@@ -360,7 +360,7 @@ fun MapViewComponent(
                 logo.updateSettings { enabled = false }
                 attribution.updateSettings { enabled = false }
 
-                loadStyle(getMapboxMap().style) { style ->
+                getMapboxMap().loadStyleUri("mapbox://styles/mapbox/navigation-night-v1") { style ->
                     Log.d(TAG, "Map style loaded")
                     onStyleLoaded()
 
@@ -419,7 +419,7 @@ fun MapViewComponent(
         update = { mapViewInstance ->
             if (!styleLoaded) return@AndroidView
 
-            mapViewInstance.mapboxMap.getStyle { style ->
+            mapViewInstance.getMapboxMap().getStyle { style ->
                 try {
                     val annotationApi = mapViewInstance.annotations
                     annotationApi.cleanup()
@@ -959,7 +959,7 @@ fun updateCamera(
         val offsetLat = loc.latitude - (offsetDistance * cos(bearing))
         val offsetLon = loc.longitude - (offsetDistance * sin(bearing))
 
-        mapView.mapboxMap.setCamera(
+        mapView.getMapboxMap().setCamera(
             CameraOptions.Builder()
                 .center(Point.fromLngLat(offsetLon, offsetLat))
                 .zoom(17.2)
@@ -968,7 +968,7 @@ fun updateCamera(
                 .build()
         )
     } else if (showRouteOverview && route != null) {
-        mapView.mapboxMap.setCamera(
+        mapView.getMapboxMap().setCamera(
             CameraOptions.Builder()
                 .center(Point.fromLngLat(loc.longitude, loc.latitude))
                 .zoom(17.8)
@@ -977,7 +977,7 @@ fun updateCamera(
                 .build()
         )
     } else {
-        mapView.mapboxMap.setCamera(
+        mapView.getMapboxMap().setCamera(
             CameraOptions.Builder()
                 .center(Point.fromLngLat(loc.longitude, loc.latitude))
                 .zoom(17.8)
