@@ -3,7 +3,11 @@ package com.example.dash_map
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import android.location.Location
 import android.os.Looper
 import android.util.Log
@@ -88,7 +92,7 @@ import com.google.android.gms.location.Priority
 import com.mapbox.geojson.Point
 import com.mapbox.maps.CameraOptions
 import com.mapbox.maps.MapView
-import com.mapbox.maps.Style
+import com.mapbox.maps.extension.style.expressions.generated.Expression
 import com.mapbox.maps.plugin.annotation.annotations
 import com.mapbox.maps.plugin.annotation.generated.PointAnnotationOptions
 import com.mapbox.maps.plugin.annotation.generated.PolylineAnnotationOptions
@@ -317,16 +321,61 @@ fun MapWidget(
                     MapView(ctx).apply {
                         mapView = this
 
-                        // Disable UI elements
                         compass.enabled = false
                         scalebar.enabled = false
                         logo.updateSettings { enabled = false }
                         attribution.updateSettings { enabled = false }
 
-                        // Load style only once
+                        // Load style
                         loadStyle(getMapboxMap().style) { style ->
                             Log.d(TAG, "Map style loaded successfully")
                             styleLoaded = true
+                            // Make ALL roads dark / neutral
+                            listOf(
+                                "road-primary",
+                                "road-secondary",
+                                "road-tertiary",
+                                "road-street",
+                                "road-minor"
+                            ).forEach { layerId ->
+                                if (style.styleLayerExists(layerId)) {
+                                    style.setStyleLayerProperty(
+                                        layerId,
+                                        "line-color",
+                                        Expression.rgb(18.0, 18.0, 18.0)
+                                    )
+                                    style.setStyleLayerProperty(
+                                        layerId,
+                                        "line-opacity",
+                                        Expression.literal(0.25)
+                                    )
+                                }
+                            }
+                            style.setStyleLayerProperty(
+                                "road-label",
+                                "text-opacity",
+                                Expression.literal(0.0)
+                            )
+                            style.setStyleLayerProperty(
+                                "land",
+                                "background-color",
+                                Expression.rgb(10.0, 10.0, 10.0)
+                            )
+                            style.setStyleLayerProperty(
+                                "poi-label",
+                                "text-opacity",
+                                Expression.literal(0.0)
+                            )
+                            style.styleLayers.forEach { layer ->
+                                if (layer.id.contains("traffic", ignoreCase = true)) {
+                                    style.setStyleLayerProperty(
+                                        layer.id,
+                                        "line-opacity",
+                                        Expression.literal(0.0)
+                                    )
+                                }
+                            }
+
                         }
                     }
                 },
@@ -374,7 +423,7 @@ fun MapWidget(
                                         .withPoint(Point.fromLngLat(loc.longitude, loc.latitude))
                                         .withIconImage("navigation-pointer")
                                         .withIconRotate(loc.bearing.toDouble())
-                                        .withIconSize(1.2)
+                                        .withIconSize(0.8)
 
                                     val annotation = pointManager.create(locationPoint)
                                     Log.d(TAG, "Navigation pointer annotation created: $annotation")
@@ -386,10 +435,9 @@ fun MapWidget(
                                 if (isNavigating && !showRouteOverview) {
                                     mapViewInstance.mapboxMap.setCamera(
                                         CameraOptions.Builder()
-                                            .center(Point.fromLngLat(loc.longitude, loc.latitude))
-                                            .zoom(16.5)
+                                            .zoom(17.2)
+                                            .pitch(48.0)
                                             .bearing(loc.bearing.toDouble())
-                                            .pitch(35.0)
                                             .build()
                                     )
                                     Log.d(TAG, "Camera set to navigation mode")
@@ -406,21 +454,29 @@ fun MapWidget(
 
                                         mapViewInstance.mapboxMap.setCamera(
                                             CameraOptions.Builder()
-                                                .center(Point.fromLngLat(centerLon, centerLat))
-                                                .zoom(12.0)
-                                                .pitch(0.0)
+                                                .center(
+                                                    Point.fromLngLat(
+                                                        loc.longitude,
+                                                        loc.latitude
+                                                    )
+                                                ) // 👈 ALWAYS YOU
+                                                .zoom(17.8)           // tight like radar view
+                                                .bearing(loc.bearing.toDouble())
+                                                .pitch(45.0)           // flat = clean HUD look
                                                 .build()
                                         )
+
+
                                         Log.d(TAG, "Camera set to route overview mode")
                                     } else {
-                                        Log.d(TAG, "point.size < 1")
+                                        Log.d(TAG, "Camera set to route overview mode")
                                     }
                                 } else {
                                     mapViewInstance.mapboxMap.setCamera(
                                         CameraOptions.Builder()
                                             .center(Point.fromLngLat(loc.longitude, loc.latitude))
-                                            .zoom(14.0)
-                                            .pitch(0.0)
+                                            .zoom(17.8)
+                                            .pitch(45.0)
                                             .build()
                                     )
                                     Log.d(TAG, "Camera set to normal mode")
@@ -437,13 +493,13 @@ fun MapWidget(
                                         )
                                         val polylineManager =
                                             annotationApi.createPolylineAnnotationManager()
-                                        val polyline = PolylineAnnotationOptions()
-                                            .withPoints(navRoute.routePoints)
-                                            .withLineColor(Color.parseColor("#5AC8FA"))
-                                            .withLineWidth(6.0)
 
-                                        val routeLine = polylineManager.create(polyline)
-                                        Log.d(TAG, "Route polyline created: $routeLine")
+                                        polylineManager.create(
+                                            PolylineAnnotationOptions()
+                                                .withPoints(navRoute.routePoints)
+                                                .withLineWidth(7.0)
+                                                .withLineColor(Color.parseColor("#00B3FF")) // bright cyan
+                                        )
                                     } catch (e: Exception) {
                                         Log.e(TAG, "Error drawing route", e)
                                     }
@@ -576,54 +632,51 @@ fun MapWidget(
                             Column {
                                 Card(
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 16.dp, start = 16.dp, end = 16.dp),
+                                        .padding(top = 12.dp, start = 12.dp)
+                                        .fillMaxWidth(0.5f),   // 👈 HALF WIDTH
                                     colors = CardDefaults.cardColors(
-                                        containerColor = androidx.compose.ui.graphics.Color(
-                                            0xFF1C1C1E
-                                        )
+                                        containerColor = androidx.compose.ui.graphics.Color.Black
                                     ),
-                                    shape = RoundedCornerShape(16.dp)
+                                    shape = RoundedCornerShape(14.dp)
                                 ) {
                                     currentStep?.let { step ->
                                         Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(20.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                            modifier = Modifier.padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Icon(
-                                                imageVector = getManeuverIcon(
+                                                getManeuverIcon(
                                                     step.maneuverType,
                                                     step.maneuverModifier
                                                 ),
-                                                contentDescription = "Maneuver",
+                                                contentDescription = null,
                                                 tint = androidx.compose.ui.graphics.Color.White,
-                                                modifier = Modifier.size(32.dp)
+                                                modifier = Modifier.size(22.dp)
                                             )
 
-                                            Column(
-                                                modifier = Modifier.weight(1f)
-                                            ) {
+                                            Spacer(Modifier.width(10.dp))
+
+                                            Column {
                                                 Text(
                                                     text = formatDistance(distanceToNextStep),
-                                                    fontSize = 36.sp,
+                                                    fontSize = 20.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     color = androidx.compose.ui.graphics.Color.White
                                                 )
-                                                step.name?.let { roadName ->
+                                                step.name?.let {
                                                     Text(
-                                                        text = roadName,
-                                                        fontSize = 20.sp,
-                                                        color = androidx.compose.ui.graphics.Color.White,
-                                                        fontWeight = FontWeight.Medium
+                                                        text = it,
+                                                        fontSize = 13.sp,
+                                                        color = androidx.compose.ui.graphics.Color(
+                                                            0xFFB0B0B0
+                                                        )
                                                     )
                                                 }
                                             }
                                         }
                                     }
                                 }
+
 
                                 val nextStep = navRoute.steps.getOrNull(currentStepIndex + 1)
                                 nextStep?.let { next ->
@@ -656,81 +709,55 @@ fun MapWidget(
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(16.dp),
+                                .padding(12.dp),
                             colors = CardDefaults.cardColors(
-                                containerColor = androidx.compose.ui.graphics.Color(0xFF1C1C1E)
+                                containerColor = androidx.compose.ui.graphics.Color.Black
                             ),
-                            shape = RoundedCornerShape(16.dp)
+                            shape = RoundedCornerShape(18.dp)
                         ) {
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(20.dp),
-                                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                                modifier = Modifier.padding(16.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column {
                                     Text(
-                                        text = formatDuration(remainingDuration),
-                                        fontSize = 28.sp,
+                                        formatDuration(remainingDuration),
+                                        fontSize = 22.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = androidx.compose.ui.graphics.Color.White
                                     )
                                     Text(
-                                        text = formatDistance(remainingDistance),
-                                        fontSize = 14.sp,
-                                        color = androidx.compose.ui.graphics.Color(0xFF8E8E93)
+                                        formatDistance(remainingDistance),
+                                        fontSize = 13.sp,
+                                        color = androidx.compose.ui.graphics.Color(0xFFB0B0B0)
                                     )
                                 }
 
-                                Spacer(modifier = Modifier.weight(1f))
+                                Spacer(Modifier.weight(1f))
 
-                                Row(
-                                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                                ) {
-                                    IconButton(
-                                        onClick = { showRouteOverview = !showRouteOverview },
-                                        modifier = Modifier
-                                            .size(44.dp)
-                                            .background(
-                                                androidx.compose.ui.graphics.Color(0xFF2C2C2E),
-                                                RoundedCornerShape(22.dp)
-                                            )
-                                    ) {
-                                        Icon(
-                                            imageVector = if (showRouteOverview) Icons.Default.Navigation else Icons.Default.Route,
-                                            contentDescription = "Overview",
-                                            tint = androidx.compose.ui.graphics.Color.White,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
+                                IconButton(onClick = { showRouteOverview = !showRouteOverview }) {
+                                    Icon(
+                                        Icons.Default.Route,
+                                        null,
+                                        tint = androidx.compose.ui.graphics.Color.White
+                                    )
+                                }
 
-                                    IconButton(
-                                        onClick = {
-                                            Log.d(TAG, "Ending navigation")
-                                            isNavigating = false
-                                            mapDestination = null
-                                            route = null
-                                            currentStepIndex = 0
-                                            showRouteOverview = false
-                                        },
-                                        modifier = Modifier
-                                            .size(44.dp)
-                                            .background(
-                                                androidx.compose.ui.graphics.Color(0xFFFF3B30),
-                                                RoundedCornerShape(22.dp)
-                                            )
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Close,
-                                            contentDescription = "End",
-                                            tint = androidx.compose.ui.graphics.Color.White,
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
+                                IconButton(onClick = {
+                                    isNavigating = false
+                                    route = null
+                                }) {
+                                    Icon(
+                                        Icons.Default.Close,
+                                        null,
+                                        tint = androidx.compose.ui.graphics.Color.Red
+                                    )
                                 }
                             }
                         }
+
+
+
                     }
                 }
             }
@@ -774,7 +801,6 @@ fun getManeuverIcon(
             "sharp right" -> Icons.Default.TurnSharpRight
             else -> Icons.Default.ArrowUpward
         }
-
         "merge" -> Icons.Default.MergeType
         "roundabout", "rotary" -> Icons.Default.RotateRight
         "arrive" -> Icons.Default.Place
@@ -804,69 +830,48 @@ fun formatDuration(seconds: Double): String {
     }
 }
 
-// Create NFS-style navigation pointer
-fun createNavigationPointer(): android.graphics.Bitmap {
-    val size = 120
-    val bitmap =
-        android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
-    val canvas = android.graphics.Canvas(bitmap)
 
-    val paint = android.graphics.Paint().apply {
-        isAntiAlias = true
-        style = android.graphics.Paint.Style.FILL
+fun createNavigationPointer(): Bitmap {
+    val size = 120
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+
+    // Fill (neon green)
+    val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#39FF14") // neon green
+        style = Paint.Style.FILL
     }
 
-    // Create chevron/arrow shape pointing upward (NFS style)
-    val path = android.graphics.Path()
-    val centerX = size / 2f
-    val centerY = size / 2f
+    // Thin black outline
+    val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.BLACK
+        style = Paint.Style.STROKE
+        strokeWidth = 20f   // VERY thin border
+    }
 
-    // Outer glow (blue)
-    paint.color = Color.parseColor("#5AC8FA")
-    paint.setShadowLayer(12f, 0f, 0f, Color.parseColor("#5AC8FA"))
+    val path = Path().apply {
+        moveTo(size / 2f, 8f)               // tip
+        lineTo(size - 22f, size - 28f)      // right
+        lineTo(size / 2f, size - 42f)       // notch
+        lineTo(22f, size - 28f)             // left
+        close()
+    }
 
-    // Main arrow shape
-    path.moveTo(centerX, centerY - 40f) // Top point
-    path.lineTo(centerX + 25f, centerY + 10f) // Right outer
-    path.lineTo(centerX + 12f, centerY + 10f) // Right inner
-    path.lineTo(centerX + 12f, centerY + 40f) // Right bottom
-    path.lineTo(centerX - 12f, centerY + 40f) // Left bottom
-    path.lineTo(centerX - 12f, centerY + 10f) // Left inner
-    path.lineTo(centerX - 25f, centerY + 10f) // Left outer
-    path.close()
-
-    canvas.drawPath(path, paint)
-
-    // Inner highlight
-    paint.color = Color.WHITE
-    paint.clearShadowLayer()
-    val innerPath = android.graphics.Path()
-    innerPath.moveTo(centerX, centerY - 35f)
-    innerPath.lineTo(centerX + 20f, centerY + 8f)
-    innerPath.lineTo(centerX + 10f, centerY + 8f)
-    innerPath.lineTo(centerX + 10f, centerY + 35f)
-    innerPath.lineTo(centerX - 10f, centerY + 35f)
-    innerPath.lineTo(centerX - 10f, centerY + 8f)
-    innerPath.lineTo(centerX - 20f, centerY + 8f)
-    innerPath.close()
-
-    canvas.drawPath(innerPath, paint)
-
-    // Center dot for precision
-    paint.color = Color.parseColor("#007AFF")
-    canvas.drawCircle(centerX, centerY, 6f, paint)
+    canvas.drawPath(path, strokePaint)
+    canvas.drawPath(path, fillPaint)
 
     return bitmap
 }
 
+
 // Create destination marker
-fun createDestinationMarker(): android.graphics.Bitmap {
+fun createDestinationMarker(): Bitmap {
     val size = 100
     val bitmap =
-        android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
-    val canvas = android.graphics.Canvas(bitmap)
+        Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
 
-    val paint = android.graphics.Paint().apply {
+    val paint = Paint().apply {
         isAntiAlias = true
         style = android.graphics.Paint.Style.FILL
     }
@@ -881,7 +886,7 @@ fun createDestinationMarker(): android.graphics.Bitmap {
     // Draw pin shape
     canvas.drawCircle(centerX, centerY - 15f, 18f, paint)
 
-    val pinPath = android.graphics.Path()
+    val pinPath = Path()
     pinPath.moveTo(centerX, centerY + 25f) // Bottom point
     pinPath.lineTo(centerX - 15f, centerY - 5f) // Left
     pinPath.arcTo(centerX - 18f, centerY - 33f, centerX + 18f, centerY + 3f, 180f, -180f, false)
