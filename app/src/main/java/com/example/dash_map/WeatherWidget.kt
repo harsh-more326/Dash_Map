@@ -1,19 +1,15 @@
 package com.example.dash_map
 
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AcUnit
@@ -24,10 +20,7 @@ import androidx.compose.material.icons.filled.Thunderstorm
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material.icons.filled.WbSunny
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -36,15 +29,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
-import androidx.compose.runtime.*
-import androidx.compose.ui.window.Dialog
 import kotlin.math.floor
 
 // Moon phase calculation
@@ -97,29 +87,21 @@ fun getMoonEmoji(phase: String): String {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun WeatherWidget(
     weather: WeatherData?,
     modifier: Modifier = Modifier
-        .fillMaxWidth()
-        .height(200.dp)
-
 ) {
-    val displayWeather = weather ?: WeatherData(
-        14, "Locating...", "Cloudy", 0, 0, "Good", 0, 10
-    )
+    val displayWeather = weather ?: WeatherData(14, "Locating...", "Cloudy", 0, 0, "Good", 0, 10)
 
-    var showSettings by remember { mutableStateOf(false) }
-    var prefs by remember {
-        mutableStateOf(
-            WeatherDisplayPrefs()
-        )
-    }
-
-    val calendar = remember { Calendar.getInstance() }
-    val date = remember {
-        SimpleDateFormat("MMM dd", Locale.getDefault()).format(calendar.time)
+    val (currentDate, isNightTime, moonPhase) = remember {
+        val calendar = Calendar.getInstance()
+        val dateFormat = SimpleDateFormat("MMM dd", Locale.getDefault())
+        val date = dateFormat.format(calendar.time)
+        val hour = calendar.get(Calendar.HOUR_OF_DAY)
+        val isNight = hour >= 19 || hour < 6 // After 7 PM (19:00) or before 6 AM
+        val phase = getMoonPhase(calendar)
+        Triple(date, isNight, phase)
     }
 
     Box(
@@ -127,219 +109,214 @@ fun WeatherWidget(
             .clip(RoundedCornerShape(24.dp))
             .background(
                 Brush.verticalGradient(
-                    listOf(
-                        Color(0xFF35436B),
-                        Color(0xFF1C2748)
-                    )
+                    colors = if (isNightTime) {
+                        listOf(
+                            Color(0xFF1A237E).copy(alpha = 0.6f),
+                            Color(0xFF0D1B4D).copy(alpha = 0.5f)
+                        )
+                    } else {
+                        listOf(
+                            Color(0xFF5E72A8).copy(alpha = 0.5f),
+                            Color(0xFF4A5C8C).copy(alpha = 0.4f)
+                        )
+                    }
                 )
             )
-            .combinedClickable(
-                onClick = {},
-                onLongClick = { showSettings = true }
-            )
-            .padding(16.dp)
+            .padding(10.dp)
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-
-            // ─── TOP ROW ──────────────────────────────
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top
+            // Left side - City, Date and Temperature
+            Column(
+                verticalArrangement = Arrangement.Top,
+                horizontalAlignment = Alignment.Start,
+                modifier = Modifier.weight(1f)
             ) {
-                Column {
-                    Text(
-                        text = displayWeather.city,
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        text = date,
-                        color = Color.White.copy(alpha = 0.7f),
-                        fontSize = 14.sp
-                    )
-                }
-
-                Icon(
-                    imageVector = when (displayWeather.condition) {
-                        "Clear" -> Icons.Default.WbSunny
-                        "Rainy" -> Icons.Default.WaterDrop
-                        "Snowy" -> Icons.Default.AcUnit
-                        "Stormy" -> Icons.Default.Thunderstorm
-                        else -> Icons.Default.Cloud
-                    },
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(42.dp)
+                Text(
+                    text = displayWeather.city,
+                    color = Color.White,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
-            }
-
-            // ─── TEMPERATURE ──────────────────────────
-            Text(
-                text = "${displayWeather.temperature}°",
-                fontSize = 64.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color.White
-            )
-
-            Text(
-                text = displayWeather.condition,
-                fontSize = 18.sp,
-                color = Color.White.copy(alpha = 0.9f)
-            )
-
-            // PUSH INFO ROW DOWN SAFELY
-            Spacer(modifier = Modifier.weight(1f))
-
-            // ─── INFO ROW ─────────────────────────────
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-
-                if (prefs.showWind) {
-                    WeatherInfoItem(
-                        icon = Icons.Default.Air,
-                        value = "${displayWeather.windSpeed} km/h"
-                    )
-                }
-
-                if (prefs.showAQI && displayWeather.aqi > 0) {
-                    WeatherInfoItem(
-                        icon = Icons.Default.Eco,
-                        value = "AQI ${displayWeather.aqi}"
-                    )
-                }
-
-                if (prefs.showHumidity) {
-                    WeatherInfoItem(
-                        icon = Icons.Default.WaterDrop,
-                        value = "${displayWeather.humidity}%"
-                    )
-                }
-
-                if (prefs.showVisibility) {
-                    WeatherInfoItem(
-                        icon = Icons.Default.Visibility,
-                        value = "${displayWeather.visibility} km"
-                    )
-                }
-            }
-        }
-}
-        if (showSettings) {
-        WeatherSettingsDialog(
-            prefs = prefs,
-            onPrefsChange = { prefs = it },
-            onDismiss = { showSettings = false }
-        )
-    }
-}
-
-@Composable
-fun WeatherInfoItem(
-    icon: ImageVector,
-    value: String
-) {
-    Column(
-        modifier = Modifier.width(64.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = Color.White,
-            modifier = Modifier.size(20.dp)
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = value,
-            fontSize = 14.sp,
-            color = Color.White,
-            fontWeight = FontWeight.Medium
-        )
-    }
-}
-
-
-@Composable
-fun WeatherSettingsDialog(
-    prefs: WeatherDisplayPrefs,
-    onPrefsChange: (WeatherDisplayPrefs) -> Unit,
-    onDismiss: () -> Unit
-) {
-    Dialog(onDismissRequest = onDismiss) {
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(16.dp))
-                .background(Color(0xFF1C1C1E))
-                .padding(20.dp)
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
 
                 Text(
-                    text = "Weather Settings",
-                    color = Color.White,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold
+                    text = currentDate,
+                    color = Color.White.copy(alpha = 0.55f),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Normal
                 )
 
-                SettingToggle("Wind Speed", prefs.showWind) {
-                    onPrefsChange(prefs.copy(showWind = it))
-                }
+                Text(
+                    text = "${displayWeather.temperature}°",
+                    color = Color.White,
+                    fontSize = 72.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
 
-                SettingToggle("Air Quality (AQI)", prefs.showAQI) {
-                    onPrefsChange(prefs.copy(showAQI = it))
-                }
-
-                SettingToggle("Humidity", prefs.showHumidity) {
-                    onPrefsChange(prefs.copy(showHumidity = it))
-                }
-
-                SettingToggle("Visibility", prefs.showVisibility) {
-                    onPrefsChange(prefs.copy(showVisibility = it))
-                }
-
-                Button(
-                    onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF007AFF)
-                    )
+            // Middle - Wind speed, AQI, Humidity, and Visibility
+            Column(
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f)
+            ) {
+                // Wind Speed
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Done")
+                    Icon(
+                        imageVector = Icons.Default.Air,
+                        contentDescription = "Wind",
+                        tint = Color.White.copy(alpha = 0.9f),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = "${displayWeather.windSpeed} km/h",
+                        color = Color.White.copy(alpha = 0.95f),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                // AQI (if available)
+                if (displayWeather.aqi > 0) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Eco,
+                            contentDescription = "AQI",
+                            tint = when (displayWeather.aqiCategory) {
+                                "Good" -> Color(0xFF00E676)
+                                "Moderate" -> Color(0xFFFFEB3B)
+                                "Unhealthy for Sensitive" -> Color(0xFFFF9800)
+                                "Unhealthy" -> Color(0xFFF44336)
+                                "Very Unhealthy" -> Color(0xFFE91E63)
+                                else -> Color(0xFF9C27B0)
+                            },
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Text(
+                            text = "AQI ${displayWeather.aqi}",
+                            color = Color.White.copy(alpha = 0.95f),
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                // Humidity
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.WaterDrop,
+                        contentDescription = "Humidity",
+                        tint = Color(0xFF64B5F6),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = "${displayWeather.humidity}%",
+                        color = Color.White.copy(alpha = 0.95f),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                // Visibility
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Visibility,
+                        contentDescription = "Visibility",
+                        tint = Color(0xFFAB47BC),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = "${displayWeather.visibility} km",
+                        color = Color.White.copy(alpha = 0.95f),
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+
+            // Right side - Icon and Condition (with moon phase at night)
+            Column(
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f)
+            ) {
+                if (isNightTime) {
+                    // Show moon phase and weather condition
+                    Text(
+                        text = getMoonEmoji(moonPhase),
+                        fontSize = 64.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // Show weather condition overlay icon if not clear
+                    if (displayWeather.condition != "Clear") {
+                        Icon(
+                            imageVector = when (displayWeather.condition) {
+                                "Rainy" -> Icons.Default.WaterDrop
+                                "Snowy" -> Icons.Default.AcUnit
+                                "Stormy" -> Icons.Default.Thunderstorm
+                                "Foggy" -> Icons.Default.Cloud
+                                else -> Icons.Default.Cloud
+                            },
+                            contentDescription = displayWeather.condition,
+                            tint = Color.White.copy(alpha = 0.9f),
+                            modifier = Modifier.size(32.dp)
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+
+                    Text(
+                        text = moonPhase,
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Normal
+                    )
+                } else {
+                    // Daytime - show sun and weather
+                    Icon(
+                        imageVector = when (displayWeather.condition) {
+                            "Clear" -> Icons.Default.WbSunny
+                            "Rainy" -> Icons.Default.WaterDrop
+                            "Snowy" -> Icons.Default.AcUnit
+                            "Stormy" -> Icons.Default.Thunderstorm
+                            "Foggy" -> Icons.Default.Cloud
+                            else -> Icons.Default.Cloud
+                        },
+                        contentDescription = displayWeather.condition,
+                        tint = Color.White.copy(alpha = 0.9f),
+                        modifier = Modifier.size(64.dp)
+                    )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = displayWeather.condition,
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Medium
+                    )
                 }
             }
         }
     }
 }
-
-@Composable
-fun SettingToggle(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(label, color = Color.White)
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
-    }
-}
-
-data class WeatherDisplayPrefs(
-    val showWind: Boolean = true,
-    val showAQI: Boolean = true,
-    val showHumidity: Boolean = true,
-    val showVisibility: Boolean = true
-)

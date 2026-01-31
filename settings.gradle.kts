@@ -25,8 +25,8 @@ dependencyResolutionManagement {
                 username = "mapbox"
                 // Get your secret token from https://account.mapbox.com/access-tokens/
                 // It should start with "sk."
-                password =
-                    "sk.eyJ1IjoibW9yZWhhcnNoIiwiYSI6ImNta3NveXc1MDFiZW0zZnNlNXJxa3V4bGQifQ.M7jecbq64j_dNuwkX4NbQg"
+                password = providers.gradleProperty("MAPBOX_TOKEN").get()
+
             }
         }
     }
