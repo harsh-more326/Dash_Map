@@ -2,6 +2,7 @@ package com.example.dash_map
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.*
 import android.location.Location
@@ -47,6 +48,7 @@ import com.mapbox.maps.plugin.annotation.generated.createPointAnnotationManager
 import com.mapbox.maps.plugin.annotation.generated.createPolylineAnnotationManager
 import com.mapbox.maps.plugin.attribution.attribution
 import com.mapbox.maps.plugin.compass.compass
+import com.mapbox.maps.plugin.gestures.gestures
 import com.mapbox.maps.plugin.logo.logo
 import com.mapbox.maps.plugin.scalebar.scalebar
 import kotlinx.coroutines.Dispatchers
@@ -90,6 +92,7 @@ fun MapWidget(
     location: GeoPoint? = null,
     destination: GeoPoint? = null,
     onOpenMaps: () -> Unit = {},
+    onSwitchToClock: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -101,6 +104,10 @@ fun MapWidget(
     var isNavigating by remember { mutableStateOf(false) }
     var showSearchDialog by remember { mutableStateOf(false) }
     var showRouteOverview by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    var showTraffic by remember { mutableStateOf(false) }
+    var showNavigationCards by remember { mutableStateOf(true) }
+    var mapInteractionEnabled by remember { mutableStateOf(true) } // Enabled by default for exploration
     var route by remember { mutableStateOf<NavigationRoute?>(null) }
     var currentStepIndex by remember { mutableStateOf(0) }
     var currentSpeed by remember { mutableStateOf(0f) }
@@ -115,6 +122,24 @@ fun MapWidget(
     }
     var initialCameraSet by remember { mutableStateOf(false) }
     var styleLoaded by remember { mutableStateOf(false) }
+    var needsRecenter by remember { mutableStateOf(false) }
+
+    // Load last saved location
+    val sharedPrefs = remember { context.getSharedPreferences("map_prefs", Context.MODE_PRIVATE) }
+    var lastSavedLocation by remember {
+        mutableStateOf(
+            try {
+                val lat = sharedPrefs.getFloat("last_lat", 0f).toDouble()
+                val lon = sharedPrefs.getFloat("last_lon", 0f).toDouble()
+                if (lat != 0.0 && lon != 0.0) Location("").apply {
+                    latitude = lat
+                    longitude = lon
+                } else null
+            } catch (e: Exception) {
+                null
+            }
+        )
+    }
 
     // Location services
     val fusedLocationClient = remember {
@@ -125,12 +150,15 @@ fun MapWidget(
         object : LocationCallback() {
             override fun onLocationResult(locationResult: LocationResult) {
                 locationResult.lastLocation?.let { loc ->
-                    Log.d(
-                        TAG,
-                        "Location: ${loc.latitude}, ${loc.longitude}, bearing: ${loc.bearing}"
-                    )
+                    Log.d(TAG, "Location: ${loc.latitude}, ${loc.longitude}, bearing: ${loc.bearing}")
                     currentLocation = loc
                     currentSpeed = loc.speed
+
+                    // Save location
+                    sharedPrefs.edit()
+                        .putFloat("last_lat", loc.latitude.toFloat())
+                        .putFloat("last_lon", loc.longitude.toFloat())
+                        .apply()
 
                     if (isNavigating && route != null) {
                         val currentStep = route!!.steps.getOrNull(currentStepIndex)
@@ -140,8 +168,10 @@ fun MapWidget(
                                 step.location.latitude(), step.location.longitude()
                             )
 
-                            if (distanceToNextStep < 30.0 && currentStepIndex < route!!.steps.size - 1) {
+                            // Auto-advance to next step when close enough (20 meters threshold)
+                            if (distanceToNextStep < 20.0 && currentStepIndex < route!!.steps.size - 1) {
                                 currentStepIndex++
+                                Log.d(TAG, "Advanced to step ${currentStepIndex + 1}")
                             }
                         }
                     }
@@ -227,46 +257,349 @@ fun MapWidget(
             )
         } else {
             MapViewComponent(
-                currentLocation = currentLocation,
+                currentLocation = currentLocation ?: lastSavedLocation,
                 mapDestination = mapDestination,
                 route = route,
                 isNavigating = isNavigating,
                 showRouteOverview = showRouteOverview,
                 styleLoaded = styleLoaded,
-                onStyleLoaded = { styleLoaded = true }
+                currentStepIndex = currentStepIndex,
+                showTraffic = showTraffic,
+                mapInteractionEnabled = mapInteractionEnabled,
+                needsRecenter = needsRecenter,
+                onStyleLoaded = { styleLoaded = true },
+                onRecenterComplete = { needsRecenter = false }
             )
 
-            // UI Overlays
-            if (!isNavigating) {
-                NonNavigationUI(
-                    mapDestination = mapDestination,
-                    route = route,
-                    isNavigating = isNavigating,
-                    onSearchClick = { showSearchDialog = true },
-                    onStartNavigation = {
-                        Log.d(TAG, "Starting navigation")
-                        isNavigating = true
-                        currentStepIndex = 0
-                        showRouteOverview = false
+            // ALL UI COMPONENTS IN ONE COLUMN TO PREVENT OVERLAP
+            Column(
+                modifier = Modifier.fillMaxSize()
+            ) {
+                // TOP ROW
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.Top
+                ) {
+                    if (!isNavigating) {
+                        // NOT NAVIGATING: Show recenter/unlock, search bar, settings
+                        // Recenter/Unlock button (left) - changes based on map state
+                        FloatingActionButton(
+                            onClick = {
+                                if (mapInteractionEnabled) {
+                                    // Currently unlocked - lock and recenter
+                                    needsRecenter = true
+                                    mapInteractionEnabled = false
+                                } else {
+                                    // Currently locked - unlock for free movement
+                                    mapInteractionEnabled = true
+                                }
+                            },
+                            modifier = Modifier.size(48.dp),
+                            containerColor = if (mapInteractionEnabled) {
+                                androidx.compose.ui.graphics.Color(0xFF1C1C1E)
+                            } else {
+                                androidx.compose.ui.graphics.Color(0xFF007AFF) // Highlight when locked
+                            },
+                            contentColor = androidx.compose.ui.graphics.Color.White
+                        ) {
+                            Icon(
+                                imageVector = if (mapInteractionEnabled) {
+                                    Icons.Default.MyLocation // Recenter icon when unlocked
+                                } else {
+                                    Icons.Default.LockOpen // Unlock icon when locked
+                                },
+                                contentDescription = if (mapInteractionEnabled) "Recenter" else "Unlock Map",
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        // Search bar (center - bigger)
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(56.dp)
+                                .shadow(8.dp, RoundedCornerShape(28.dp))
+                                .clip(RoundedCornerShape(28.dp))
+                                .background(androidx.compose.ui.graphics.Color(0xFF1C1C1E))
+                                .clickable { showSearchDialog = true }
+                                .padding(horizontal = 20.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = "Search",
+                                    tint = androidx.compose.ui.graphics.Color(0xFF8E8E93)
+                                )
+                                Text(
+                                    text = mapDestination?.let { "Destination set" }
+                                        ?: "Search for a place",
+                                    color = androidx.compose.ui.graphics.Color(0xFF8E8E93),
+                                    fontSize = 17.sp
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        // Settings button (right)
+                        FloatingActionButton(
+                            onClick = { showSettings = true },
+                            modifier = Modifier.size(48.dp),
+                            containerColor = androidx.compose.ui.graphics.Color(0xFF1C1C1E),
+                            contentColor = androidx.compose.ui.graphics.Color.White
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    } else {
+                        // NAVIGATING: Only show navigation cards (no buttons)
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = !showRouteOverview && showNavigationCards,
+                            enter = fadeIn(),
+                            exit = fadeOut()
+                        ) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                // Current step card
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(0.75f),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = androidx.compose.ui.graphics.Color(0xFF1C1C1E)
+                                    ),
+                                    shape = RoundedCornerShape(16.dp)
+                                ) {
+                                    route?.steps?.getOrNull(currentStepIndex)?.let { step ->
+                                        Column(
+                                            modifier = Modifier.padding(16.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                            ) {
+                                                Icon(
+                                                    getManeuverIcon(
+                                                        step.maneuverType,
+                                                        step.maneuverModifier
+                                                    ),
+                                                    contentDescription = null,
+                                                    tint = androidx.compose.ui.graphics.Color(0xFF00B3FF),
+                                                    modifier = Modifier.size(32.dp)
+                                                )
+                                                Column {
+                                                    Text(
+                                                        text = formatDistance(distanceToNextStep),
+                                                        fontSize = 24.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = androidx.compose.ui.graphics.Color.White
+                                                    )
+                                                    Text(
+                                                        text = getManeuverInstruction(
+                                                            step.maneuverType,
+                                                            step.maneuverModifier
+                                                        ),
+                                                        fontSize = 15.sp,
+                                                        color = androidx.compose.ui.graphics.Color(0xFFB0B0B0)
+                                                    )
+                                                }
+                                            }
+
+                                            // Road name
+                                            step.name?.let {
+                                                Text(
+                                                    text = it,
+                                                    fontSize = 16.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = androidx.compose.ui.graphics.Color.White,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Next step preview
+                                val nextStep = route?.steps?.getOrNull(currentStepIndex + 1)
+                                nextStep?.let { next ->
+                                    Row(
+                                        modifier = Modifier.padding(start = 12.dp, top = 8.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Then",
+                                            fontSize = 14.sp,
+                                            color = androidx.compose.ui.graphics.Color(0xFF8E8E93)
+                                        )
+                                        Icon(
+                                            imageVector = getManeuverIcon(
+                                                next.maneuverType,
+                                                next.maneuverModifier
+                                            ),
+                                            contentDescription = "Next",
+                                            tint = androidx.compose.ui.graphics.Color(0xFF8E8E93),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = getManeuverInstruction(
+                                                next.maneuverType,
+                                                next.maneuverModifier
+                                            ),
+                                            fontSize = 13.sp,
+                                            color = androidx.compose.ui.graphics.Color(0xFF8E8E93),
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
-                )
-            } else {
-                NavigationUI(
-                    route = route,
-                    currentStepIndex = currentStepIndex,
-                    distanceToNextStep = distanceToNextStep,
-                    showRouteOverview = showRouteOverview,
-                    onToggleOverview = { showRouteOverview = !showRouteOverview },
-                    onStopNavigation = {
-                        isNavigating = false
-                        currentStepIndex = 0
-                        route = null
-                        mapDestination = null
-                        showRouteOverview = false
+                }
+
+                Spacer(modifier = Modifier.weight(1f))
+
+                // BOTTOM: Navigation button OR Navigation controls
+                if (!isNavigating) {
+                    // Start navigation button
+                    if (mapDestination != null && route != null) {
+                        Button(
+                            onClick = {
+                                Log.d(TAG, "Starting navigation")
+                                isNavigating = true
+                                currentStepIndex = 0
+                                showRouteOverview = false
+                                mapInteractionEnabled = false // Lock map during navigation
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp)
+                                .height(56.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = androidx.compose.ui.graphics.Color(0xFF007AFF)
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Navigation,
+                                contentDescription = "Start Navigation",
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Go", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                        }
                     }
-                )
+
+                    // Loading indicator
+                    if (mapDestination != null && route == null) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(40.dp),
+                                color = androidx.compose.ui.graphics.Color(0xFF007AFF),
+                                strokeWidth = 3.dp
+                            )
+                        }
+                    }
+                } else {
+                    // Navigation bottom control card
+                    route?.let { navRoute ->
+                        // Calculate remaining duration
+                        val currentStep = navRoute.steps.getOrNull(currentStepIndex)
+                        val remainingDuration = if (currentStep != null) {
+                            val timeToNextStep = if (currentStep.distance > 0) {
+                                (distanceToNextStep / currentStep.distance) * currentStep.duration
+                            } else {
+                                0.0
+                            }
+                            timeToNextStep + navRoute.steps.drop(currentStepIndex + 1)
+                                .sumOf { it.duration }
+                        } else {
+                            0.0
+                        }
+
+                        androidx.compose.animation.AnimatedVisibility(
+                            visible = showNavigationCards,
+                            enter = fadeIn(),
+                            exit = fadeOut()
+                        ) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = androidx.compose.ui.graphics.Color(0xFF1C1C1E)
+                                ),
+                                shape = RoundedCornerShape(18.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column {
+                                        Text(
+                                            formatDuration(remainingDuration),
+                                            fontSize = 22.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = androidx.compose.ui.graphics.Color.White
+                                        )
+                                        Text(
+                                            "Estimated time",
+                                            fontSize = 13.sp,
+                                            color = androidx.compose.ui.graphics.Color(0xFFB0B0B0)
+                                        )
+                                    }
+
+                                    Spacer(Modifier.weight(1f))
+
+                                    IconButton(onClick = {
+                                        showRouteOverview = !showRouteOverview
+                                    }) {
+                                        Icon(
+                                            Icons.Default.Route,
+                                            null,
+                                            tint = androidx.compose.ui.graphics.Color.White
+                                        )
+                                    }
+
+                                    IconButton(onClick = {
+                                        isNavigating = false
+                                        currentStepIndex = 0
+                                        route = null
+                                        mapDestination = null
+                                        showRouteOverview = false
+                                        mapInteractionEnabled = true // Re-enable interaction
+                                    }) {
+                                        Icon(
+                                            Icons.Default.Close,
+                                            null,
+                                            tint = androidx.compose.ui.graphics.Color.Red
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
+            // Dialogs
             if (showSearchDialog) {
                 DestinationSearchDialog(
                     onDismiss = { showSearchDialog = false },
@@ -287,6 +620,17 @@ fun MapWidget(
                     }
                 )
             }
+
+            if (showSettings) {
+                MapSettingsDialog(
+                    showTraffic = showTraffic,
+                    showNavigationCards = showNavigationCards,
+                    onTrafficToggle = { showTraffic = it },
+                    onNavigationCardsToggle = { showNavigationCards = it },
+                    onSwitchToClock = onSwitchToClock,
+                    onDismiss = { showSettings = false }
+                )
+            }
         }
     }
 }
@@ -294,6 +638,117 @@ fun MapWidget(
 // ============================================================================
 // UI COMPONENTS
 // ============================================================================
+
+@Composable
+fun MapSettingsDialog(
+    showTraffic: Boolean,
+    showNavigationCards: Boolean,
+    onTrafficToggle: (Boolean) -> Unit,
+    onNavigationCardsToggle: (Boolean) -> Unit,
+    onSwitchToClock: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(androidx.compose.ui.graphics.Color(0xFF1C1C1E))
+                .padding(24.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Map Settings",
+                        color = androidx.compose.ui.graphics.Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            Icons.Default.Close,
+                            "Close",
+                            tint = androidx.compose.ui.graphics.Color.White
+                        )
+                    }
+                }
+
+                // Traffic toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Show Traffic",
+                        color = androidx.compose.ui.graphics.Color.White,
+                        fontSize = 16.sp
+                    )
+                    Switch(
+                        checked = showTraffic,
+                        onCheckedChange = onTrafficToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = androidx.compose.ui.graphics.Color.White,
+                            checkedTrackColor = androidx.compose.ui.graphics.Color(0xFF007AFF),
+                            uncheckedThumbColor = androidx.compose.ui.graphics.Color.White,
+                            uncheckedTrackColor = androidx.compose.ui.graphics.Color(0xFF3A3A3C)
+                        )
+                    )
+                }
+
+                // Navigation cards toggle
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Show Navigation Cards",
+                        color = androidx.compose.ui.graphics.Color.White,
+                        fontSize = 16.sp
+                    )
+                    Switch(
+                        checked = showNavigationCards,
+                        onCheckedChange = onNavigationCardsToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = androidx.compose.ui.graphics.Color.White,
+                            checkedTrackColor = androidx.compose.ui.graphics.Color(0xFF007AFF),
+                            uncheckedThumbColor = androidx.compose.ui.graphics.Color.White,
+                            uncheckedTrackColor = androidx.compose.ui.graphics.Color(0xFF3A3A3C)
+                        )
+                    )
+                }
+
+                Divider(color = androidx.compose.ui.graphics.Color(0xFF3A3A3C))
+
+                // Switch to clock button
+                Button(
+                    onClick = {
+                        onSwitchToClock()
+                        onDismiss()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = androidx.compose.ui.graphics.Color(0xFF007AFF)
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AccessTime,
+                        contentDescription = "Clock",
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Switch to Clock", fontSize = 16.sp)
+                }
+            }
+        }
+    }
+}
 
 @Composable
 fun LocationPermissionScreen(onRequestPermission: () -> Unit) {
@@ -345,9 +800,16 @@ fun MapViewComponent(
     isNavigating: Boolean,
     showRouteOverview: Boolean,
     styleLoaded: Boolean,
-    onStyleLoaded: () -> Unit
+    currentStepIndex: Int,
+    showTraffic: Boolean,
+    mapInteractionEnabled: Boolean,
+    needsRecenter: Boolean,
+    onStyleLoaded: () -> Unit,
+    onRecenterComplete: () -> Unit
 ) {
     var mapView by remember { mutableStateOf<MapView?>(null) }
+    var lastRouteHash by remember { mutableStateOf(0) }
+    var lastLocationHash by remember { mutableStateOf(0) }
 
     AndroidView(
         factory = { ctx ->
@@ -359,6 +821,18 @@ fun MapViewComponent(
                 scalebar.enabled = false
                 logo.updateSettings { enabled = false }
                 attribution.updateSettings { enabled = false }
+
+                // Enable/disable gestures based on navigation state
+                gestures.updateSettings {
+                    rotateEnabled = mapInteractionEnabled
+                    pitchEnabled = mapInteractionEnabled
+                    scrollEnabled = mapInteractionEnabled
+                    simultaneousRotateAndPinchToZoomEnabled = mapInteractionEnabled
+                    pinchToZoomEnabled = mapInteractionEnabled
+                    doubleTapToZoomInEnabled = mapInteractionEnabled
+                    doubleTouchToZoomOutEnabled = mapInteractionEnabled
+                    quickZoomEnabled = mapInteractionEnabled
+                }
 
                 getMapboxMap().loadStyleUri("mapbox://styles/mapbox/navigation-night-v1") { style ->
                     Log.d(TAG, "Map style loaded")
@@ -397,21 +871,7 @@ fun MapViewComponent(
                         "text-opacity",
                         Expression.literal(0.0)
                     )
-                    style.setStyleLayerProperty(
-                        "poi-label",
-                        "text-opacity",
-                        Expression.literal(0.0)
-                    )
-
-                    style.styleLayers.forEach { layer ->
-                        if (layer.id.contains("traffic", ignoreCase = true)) {
-                            style.setStyleLayerProperty(
-                                layer.id,
-                                "line-opacity",
-                                Expression.literal(0.0)
-                            )
-                        }
-                    }
+                    style.setStyleLayerProperty("poi-label", "text-opacity", Expression.literal(0.0))
                 }
             }
         },
@@ -419,24 +879,92 @@ fun MapViewComponent(
         update = { mapViewInstance ->
             if (!styleLoaded) return@AndroidView
 
+            // Update gestures based on interaction mode
+            mapViewInstance.gestures.updateSettings {
+                rotateEnabled = mapInteractionEnabled
+                pitchEnabled = mapInteractionEnabled
+                scrollEnabled = mapInteractionEnabled
+                simultaneousRotateAndPinchToZoomEnabled = mapInteractionEnabled
+                pinchToZoomEnabled = mapInteractionEnabled
+                doubleTapToZoomInEnabled = mapInteractionEnabled
+                doubleTouchToZoomOutEnabled = mapInteractionEnabled
+                quickZoomEnabled = mapInteractionEnabled
+            }
+
             mapViewInstance.getMapboxMap().getStyle { style ->
                 try {
                     val annotationApi = mapViewInstance.annotations
-                    annotationApi.cleanup()
 
-                    currentLocation?.let { loc ->
-                        addNavigationPointer(style, annotationApi, loc)
-                        updateCamera(mapViewInstance, loc, isNavigating, showRouteOverview, route)
-                    }
+                    // Create hash codes to detect actual changes
+                    val currentRouteHash = route?.routePoints?.hashCode() ?: 0
+                    val currentLocationHash = currentLocation?.let {
+                        "${it.latitude.hashCode()}_${it.longitude.hashCode()}_${(it.bearing / 5).toInt()}"
+                    }?.hashCode() ?: 0
 
-                    route?.let { navRoute ->
-                        if (navRoute.routePoints.isNotEmpty()) {
-                            drawRoute(annotationApi, navRoute.routePoints)
+                    // Only update if something actually changed OR we need to recenter
+                    val routeChanged = currentRouteHash != lastRouteHash
+                    val locationChanged = currentLocationHash != lastLocationHash
+
+                    if (routeChanged || locationChanged || needsRecenter) {
+                        // Clear and redraw
+                        annotationApi.cleanup()
+
+                        // 1. First draw route (behind everything)
+                        route?.let { navRoute ->
+                            if (navRoute.routePoints.isNotEmpty()) {
+                                val remainingPoints = if (isNavigating && currentLocation != null) {
+                                    getRemainingRoutePoints(
+                                        navRoute.routePoints,
+                                        currentLocation,
+                                        currentStepIndex
+                                    )
+                                } else {
+                                    navRoute.routePoints
+                                }
+
+                                if (remainingPoints.isNotEmpty()) {
+                                    drawRoute(annotationApi, remainingPoints)
+                                }
+                            }
                         }
-                    }
 
-                    mapDestination?.let { dest ->
-                        addDestinationMarker(style, annotationApi, dest)
+                        // 2. Then draw destination marker
+                        mapDestination?.let { dest ->
+                            addDestinationMarker(style, annotationApi, dest)
+                        }
+
+                        // 3. Finally draw navigation pointer (on top)
+                        currentLocation?.let { loc ->
+                            addNavigationPointer(style, annotationApi, loc)
+
+                            // Update camera - centered when not in interaction mode OR recentering
+                            if (!mapInteractionEnabled || needsRecenter) {
+                                updateCamera(
+                                    mapViewInstance,
+                                    loc,
+                                    isNavigating,
+                                    showRouteOverview,
+                                    route
+                                )
+                                if (needsRecenter) {
+                                    onRecenterComplete()
+                                }
+                            }
+                        }
+
+                        // Update traffic visibility
+                        style.styleLayers.forEach { layer ->
+                            if (layer.id.contains("traffic", ignoreCase = true)) {
+                                style.setStyleLayerProperty(
+                                    layer.id,
+                                    "line-opacity",
+                                    Expression.literal(if (showTraffic) 1.0 else 0.0)
+                                )
+                            }
+                        }
+
+                        lastRouteHash = currentRouteHash
+                        lastLocationHash = currentLocationHash
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Map update error", e)
@@ -444,222 +972,6 @@ fun MapViewComponent(
             }
         }
     )
-}
-
-@Composable
-fun BoxScope.NonNavigationUI(
-    mapDestination: GeoPoint?,
-    route: NavigationRoute?,
-    isNavigating: Boolean,
-    onSearchClick: () -> Unit,
-    onStartNavigation: () -> Unit
-) {
-    // Search bar
-    Box(
-        modifier = Modifier
-            .align(Alignment.TopCenter)
-            .padding(16.dp)
-            .fillMaxWidth(0.9f)
-            .height(56.dp)
-            .shadow(8.dp, RoundedCornerShape(12.dp))
-            .clip(RoundedCornerShape(12.dp))
-            .background(androidx.compose.ui.graphics.Color(0xFF1C1C1E))
-            .clickable { onSearchClick() }
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.Search,
-                contentDescription = "Search",
-                tint = androidx.compose.ui.graphics.Color(0xFF8E8E93)
-            )
-            Text(
-                text = mapDestination?.let { "Destination set" } ?: "Search for a place",
-                color = androidx.compose.ui.graphics.Color(0xFF8E8E93),
-                fontSize = 17.sp
-            )
-        }
-    }
-
-    // Start navigation button
-    if (mapDestination != null && route != null) {
-        Button(
-            onClick = onStartNavigation,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(24.dp)
-                .fillMaxWidth(0.9f)
-                .height(56.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = androidx.compose.ui.graphics.Color(0xFF007AFF)
-            ),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.Navigation,
-                contentDescription = "Start Navigation",
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Go", fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-        }
-    }
-
-    // Loading indicator - only show when destination is set but no route yet
-    if (mapDestination != null && route == null && !isNavigating) {
-        CircularProgressIndicator(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .size(40.dp),
-            color = androidx.compose.ui.graphics.Color(0xFF007AFF),
-            strokeWidth = 3.dp
-        )
-    }
-}
-
-@Composable
-fun NavigationUI(
-    route: NavigationRoute?,
-    currentStepIndex: Int,
-    distanceToNextStep: Double,
-    showRouteOverview: Boolean,
-    onToggleOverview: () -> Unit,
-    onStopNavigation: () -> Unit
-) {
-    route?.let { navRoute ->
-        val currentStep = navRoute.steps.getOrNull(currentStepIndex)
-        val remainingDistance = navRoute.steps.drop(currentStepIndex).sumOf { it.distance }
-        val remainingDuration = navRoute.steps.drop(currentStepIndex).sumOf { it.duration }
-
-        Column(modifier = Modifier.fillMaxSize()) {
-            AnimatedVisibility(
-                visible = !showRouteOverview,
-                enter = fadeIn(),
-                exit = fadeOut()
-            ) {
-                Column {
-                    // Current step card
-                    Card(
-                        modifier = Modifier
-                            .padding(top = 12.dp, start = 12.dp)
-                            .fillMaxWidth(0.5f),
-                        colors = CardDefaults.cardColors(
-                            containerColor = androidx.compose.ui.graphics.Color.Black
-                        ),
-                        shape = RoundedCornerShape(14.dp)
-                    ) {
-                        currentStep?.let { step ->
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    getManeuverIcon(step.maneuverType, step.maneuverModifier),
-                                    contentDescription = null,
-                                    tint = androidx.compose.ui.graphics.Color.White,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                                Spacer(Modifier.width(10.dp))
-                                Column {
-                                    Text(
-                                        text = formatDistance(distanceToNextStep),
-                                        fontSize = 20.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = androidx.compose.ui.graphics.Color.White
-                                    )
-                                    step.name?.let {
-                                        Text(
-                                            text = it,
-                                            fontSize = 13.sp,
-                                            color = androidx.compose.ui.graphics.Color(0xFFB0B0B0)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Next step preview
-                    val nextStep = navRoute.steps.getOrNull(currentStepIndex + 1)
-                    nextStep?.let { next ->
-                        Row(
-                            modifier = Modifier.padding(start = 24.dp, top = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Then",
-                                fontSize = 14.sp,
-                                color = androidx.compose.ui.graphics.Color(0xFF8E8E93)
-                            )
-                            Icon(
-                                imageVector = getManeuverIcon(
-                                    next.maneuverType,
-                                    next.maneuverModifier
-                                ),
-                                contentDescription = "Next",
-                                tint = androidx.compose.ui.graphics.Color(0xFF8E8E93),
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.weight(1f))
-
-            // Bottom control card
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = androidx.compose.ui.graphics.Color.Black
-                ),
-                shape = RoundedCornerShape(18.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text(
-                            formatDuration(remainingDuration),
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = androidx.compose.ui.graphics.Color.White
-                        )
-                        Text(
-                            formatDistance(remainingDistance),
-                            fontSize = 13.sp,
-                            color = androidx.compose.ui.graphics.Color(0xFFB0B0B0)
-                        )
-                    }
-
-                    Spacer(Modifier.weight(1f))
-
-                    IconButton(onClick = onToggleOverview) {
-                        Icon(
-                            Icons.Default.Route,
-                            null,
-                            tint = androidx.compose.ui.graphics.Color.White
-                        )
-                    }
-
-                    IconButton(onClick = onStopNavigation) {
-                        Icon(
-                            Icons.Default.Close,
-                            null,
-                            tint = androidx.compose.ui.graphics.Color.Red
-                        )
-                    }
-                }
-            }
-        }
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -785,7 +1097,7 @@ fun DestinationSearchDialog(
                         value = lonInput,
                         onValueChange = { lonInput = it },
                         label = { Text("Longitude") },
-                        placeholder = { Text("72.8777") },
+                        placeholder = { Text("72.8877") },
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(
@@ -889,10 +1201,12 @@ fun addNavigationPointer(
         style.addImage("navigation-pointer", pointerBitmap)
 
         val pointManager = annotationApi.createPointAnnotationManager()
+
+        // Pointer always points up (bearing 0) since map rotates
         val locationPoint = PointAnnotationOptions()
             .withPoint(Point.fromLngLat(loc.longitude, loc.latitude))
             .withIconImage("navigation-pointer")
-            .withIconRotate(loc.bearing.toDouble())
+            .withIconRotate(0.0) // Always point up
             .withIconSize(0.8)
 
         pointManager.create(locationPoint)
@@ -950,38 +1264,35 @@ fun updateCamera(
     showRouteOverview: Boolean,
     route: NavigationRoute?
 ) {
+    // ALWAYS CENTER ON USER LOCATION - map rotates to match heading
     if (isNavigating && !showRouteOverview) {
-        // Calculate offset position behind the user
-        val offsetDistance = 0.0008 // ~90 meters behind in degrees
-        val bearing = Math.toRadians(loc.bearing.toDouble())
-
-        // Calculate the point behind the user
-        val offsetLat = loc.latitude - (offsetDistance * cos(bearing))
-        val offsetLon = loc.longitude - (offsetDistance * sin(bearing))
-
+        // Navigation mode: centered, high zoom, tilted, rotating with bearing
         mapView.getMapboxMap().setCamera(
             CameraOptions.Builder()
-                .center(Point.fromLngLat(offsetLon, offsetLat))
-                .zoom(17.2)
-                .pitch(55.0) // Slightly higher pitch for better forward view
-                .bearing(loc.bearing.toDouble())
+                .center(Point.fromLngLat(loc.longitude, loc.latitude)) // Always centered
+                .zoom(17.5)
+                .pitch(60.0) // More tilted for better navigation view
+                .bearing(loc.bearing.toDouble()) // Map rotates to match heading
                 .build()
         )
     } else if (showRouteOverview && route != null) {
+        // Overview mode: centered, lower zoom, less tilt, rotating with bearing
         mapView.getMapboxMap().setCamera(
             CameraOptions.Builder()
-                .center(Point.fromLngLat(loc.longitude, loc.latitude))
-                .zoom(17.8)
-                .bearing(loc.bearing.toDouble())
-                .pitch(45.0)
+                .center(Point.fromLngLat(loc.longitude, loc.latitude)) // Still centered
+                .zoom(15.0)
+                .bearing(loc.bearing.toDouble()) // Map still rotates
+                .pitch(30.0)
                 .build()
         )
     } else {
+        // Exploration/recenter mode: centered, medium zoom, some tilt
         mapView.getMapboxMap().setCamera(
             CameraOptions.Builder()
-                .center(Point.fromLngLat(loc.longitude, loc.latitude))
-                .zoom(17.8)
+                .center(Point.fromLngLat(loc.longitude, loc.latitude)) // Centered
+                .zoom(17.0)
                 .pitch(45.0)
+                .bearing(loc.bearing.toDouble()) // Match current bearing when recentering
                 .build()
         )
     }
@@ -1007,11 +1318,12 @@ fun createNavigationPointer(): Bitmap {
         strokeWidth = 20f
     }
 
+    // Arrow pointing UP (since map rotates, not the pointer)
     val path = Path().apply {
-        moveTo(size / 2f, 8f)
-        lineTo(size - 22f, size - 28f)
-        lineTo(size / 2f, size - 42f)
-        lineTo(22f, size - 28f)
+        moveTo(size / 2f, 8f) // Top point
+        lineTo(size - 22f, size - 28f) // Right bottom
+        lineTo(size / 2f, size - 42f) // Center bottom notch
+        lineTo(22f, size - 28f) // Left bottom
         close()
     }
 
@@ -1073,7 +1385,6 @@ fun getManeuverIcon(
             "sharp right" -> Icons.Default.TurnSharpRight
             else -> Icons.Default.ArrowUpward
         }
-
         "merge" -> Icons.Default.MergeType
         "roundabout", "rotary" -> Icons.Default.RotateRight
         "arrive" -> Icons.Default.Place
@@ -1081,6 +1392,32 @@ fun getManeuverIcon(
         "fork" -> Icons.Default.ForkLeft
         "off ramp", "ramp" -> Icons.Default.RampRight
         else -> Icons.Default.ArrowUpward
+    }
+}
+
+fun getManeuverInstruction(type: String, modifier: String?): String {
+    return when (type) {
+        "turn" -> when (modifier) {
+            "left" -> "Turn left"
+            "right" -> "Turn right"
+            "slight left" -> "Slight left"
+            "slight right" -> "Slight right"
+            "sharp left" -> "Sharp left"
+            "sharp right" -> "Sharp right"
+            else -> "Continue"
+        }
+        "merge" -> "Merge"
+        "roundabout", "rotary" -> "Roundabout"
+        "arrive" -> "Arrive at destination"
+        "depart" -> "Depart"
+        "fork" -> when (modifier) {
+            "left" -> "Keep left"
+            "right" -> "Keep right"
+            else -> "Fork"
+        }
+        "off ramp", "ramp" -> "Take ramp"
+        "new name" -> "Continue"
+        else -> "Continue"
     }
 }
 
@@ -1100,6 +1437,36 @@ fun formatDuration(seconds: Double): String {
         if (mins > 0) "$hours hr $mins min" else "$hours hr"
     } else {
         "$minutes min"
+    }
+}
+
+fun getRemainingRoutePoints(
+    routePoints: List<Point>,
+    currentLocation: Location,
+    currentStepIndex: Int
+): List<Point> {
+    if (routePoints.isEmpty()) return emptyList()
+
+    // Find closest point on route to current location
+    var closestIndex = 0
+    var minDistance = Double.MAX_VALUE
+
+    routePoints.forEachIndexed { index, point ->
+        val distance = calculateDistance(
+            currentLocation.latitude, currentLocation.longitude,
+            point.latitude(), point.longitude()
+        )
+        if (distance < minDistance) {
+            minDistance = distance
+            closestIndex = index
+        }
+    }
+
+    // Return points from closest index onwards (removes passed route)
+    return if (closestIndex < routePoints.size - 1) {
+        routePoints.subList(closestIndex, routePoints.size)
+    } else {
+        emptyList()
     }
 }
 

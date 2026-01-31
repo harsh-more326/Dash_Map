@@ -37,6 +37,11 @@ class MainActivity : ComponentActivity(), LocationListener {
     private var currentSong = mutableStateOf("No song playing")
     private var currentArtist = mutableStateOf("")
     private var albumArtBitmap = mutableStateOf<android.graphics.Bitmap?>(null)
+    var showClock =  mutableStateOf(false)
+
+    // Store last weather fetch location
+    private var lastWeatherLat = 0.0
+    private var lastWeatherLon = 0.0
 
     private var mediaPollingRunnable: Runnable? = null
     private val handler = Handler(Looper.getMainLooper())
@@ -71,6 +76,8 @@ class MainActivity : ComponentActivity(), LocationListener {
             setContent {
                 DashMapTheme {
                     DashMapScreen(
+                        showClock = showClock,
+                        onToggleClock = {showClock.value = !showClock.value},
                         location = currentLocation.value,
                         weather = weatherData.value,
                         context = this,
@@ -79,11 +86,11 @@ class MainActivity : ComponentActivity(), LocationListener {
                         songArtist = currentArtist.value,
                         albumArtBitmap = albumArtBitmap.value,
                         onEnableDND = { enableDND() },
-                        onDisableDND = { disableDND() },
                         onOpenGoogleMaps = { openGoogleMaps() },
                         onPlayPause = { togglePlayPause() },
                         onNext = { sendMediaButton(KeyEvent.KEYCODE_MEDIA_NEXT) },
                         onPrevious = { sendMediaButton(KeyEvent.KEYCODE_MEDIA_PREVIOUS) }
+
                     )
                 }
             }
@@ -220,13 +227,15 @@ class MainActivity : ComponentActivity(), LocationListener {
                     Manifest.permission.ACCESS_FINE_LOCATION
                 ) == PackageManager.PERMISSION_GRANTED
             ) {
+                // Request GPS updates with higher accuracy
                 locationManager.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER,
-                    1000L,
-                    0f,
+                    500L,  // Update every 500ms for better accuracy
+                    0f,    // No minimum distance
                     this
                 )
 
+                // Also request network updates as backup
                 locationManager.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER,
                     1000L,
@@ -234,12 +243,24 @@ class MainActivity : ComponentActivity(), LocationListener {
                     this
                 )
 
+                // Get last known location - prefer GPS over network
                 val gpsLocation = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
                 val networkLocation = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-                val lastLocation = gpsLocation ?: networkLocation
+
+                // Use GPS if available and recent (within 2 minutes), otherwise use network
+                val lastLocation = if (gpsLocation != null &&
+                    (System.currentTimeMillis() - gpsLocation.time) < 120000) {
+                    gpsLocation
+                } else {
+                    gpsLocation ?: networkLocation
+                }
 
                 lastLocation?.let {
                     currentLocation.value = GeoPoint(it.latitude, it.longitude)
+                    lastWeatherLat = it.latitude
+                    lastWeatherLon = it.longitude
+
+                    // Fetch weather with the accurate location
                     WeatherService.fetchWeather(it.latitude, it.longitude) { data ->
                         weatherData.value = data
                     }
@@ -251,21 +272,32 @@ class MainActivity : ComponentActivity(), LocationListener {
     }
 
     override fun onLocationChanged(location: Location) {
-        currentSpeed.value = location.speed * 3.6f
-        val newLocation = GeoPoint(location.latitude, location.longitude)
-        currentLocation.value = newLocation
+        // Only update if accuracy is reasonable (less than 100 meters) or no location yet
+        if (location.accuracy <= 100f || currentLocation.value == null) {
+            currentSpeed.value = location.speed * 3.6f
+            val newLocation = GeoPoint(location.latitude, location.longitude)
+            currentLocation.value = newLocation
 
-        val shouldFetch = weatherData.value?.let {
-            val lastLat = currentLocation.value?.latitude ?: 0.0
-            val lastLon = currentLocation.value?.longitude ?: 0.0
+            // Calculate distance from last weather fetch location
             val distance = FloatArray(1)
-            Location.distanceBetween(lastLat, lastLon, location.latitude, location.longitude, distance)
-            distance[0] > 1000
-        } ?: true
+            Location.distanceBetween(
+                lastWeatherLat,
+                lastWeatherLon,
+                location.latitude,
+                location.longitude,
+                distance
+            )
 
-        if (shouldFetch) {
-            WeatherService.fetchWeather(location.latitude, location.longitude) { data ->
-                weatherData.value = data
+            // Re-fetch weather if moved more than 5km or no weather data
+            val shouldFetch = weatherData.value == null || distance[0] > 5000
+
+            if (shouldFetch) {
+                lastWeatherLat = location.latitude
+                lastWeatherLon = location.longitude
+
+                WeatherService.fetchWeather(location.latitude, location.longitude) { data ->
+                    weatherData.value = data
+                }
             }
         }
     }
