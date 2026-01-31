@@ -320,3 +320,4 @@ fun WeatherWidget(
         }
     }
 }
+
