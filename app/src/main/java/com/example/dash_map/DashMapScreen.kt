@@ -25,6 +25,9 @@ import kotlinx.coroutines.delay
 import org.osmdroid.util.GeoPoint
 import java.text.SimpleDateFormat
 import java.util.*
+import androidx.compose.runtime.collectAsState
+import com.example.dash_map.supabase.viewmodels.LocationSharingViewModel
+import com.example.dash_map.supabase.models.FriendLocation
 
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
@@ -42,7 +45,10 @@ fun DashMapScreen(
     onNext: () -> Unit,
     onPrevious: () -> Unit,
     showClock: MutableState<Boolean>,
-    onToggleClock: () -> Unit
+    onToggleClock: () -> Unit,
+    locationViewModel: LocationSharingViewModel,
+    friendLocations: List<FriendLocation> = emptyList(), // ADD THIS
+    onOpenFriendsScreen: () -> Unit = {}
 ) {
     var isDNDEnabled by remember { mutableStateOf(true) }
     var mapDestination by remember { mutableStateOf<GeoPoint?>(null) }
@@ -117,12 +123,17 @@ fun DashMapScreen(
                                 showClock.value = false
                             })
                     } else {
+                        val currentUser by locationViewModel.currentUser.collectAsState()
                         MapWidget(
                             location = location,
                             destination = mapDestination,
                             onOpenMaps = onOpenGoogleMaps,
                             onSwitchToClock = onToggleClock,
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier.fillMaxSize(),
+                            locationViewModel = locationViewModel,
+                            friendLocations = friendLocations,
+                            currentUser = currentUser,// PASS IT HERE
+                            onOpenFriendsScreen = onOpenFriendsScreen
                         )
                     }
                 }

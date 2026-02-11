@@ -57,6 +57,19 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.osmdroid.util.GeoPoint
 import java.net.URL
+import com.example.dash_map.supabase.models.FriendLocation
+import android.graphics.Typeface
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import com.example.dash_map.supabase.models.UserProfile
+import com.example.dash_map.supabase.ui.FriendsScreen
+import com.example.dash_map.supabase.viewmodels.LocationSharingViewModel
+import com.mapbox.common.MapboxOptions
+import com.mapbox.maps.Style
+import com.mapbox.maps.plugin.annotation.AnnotationPlugin
+import java.net.URLEncoder
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 import kotlin.math.*
 
 private const val TAG = "MapWidget"
@@ -93,9 +106,14 @@ fun MapWidget(
     destination: GeoPoint? = null,
     onOpenMaps: () -> Unit = {},
     onSwitchToClock: () -> Unit = {},
+    locationViewModel: LocationSharingViewModel,
+    onOpenFriendsScreen: () -> Unit = {},// ADD THIS PARAMETER
+    friendLocations: List<FriendLocation> = emptyList(),
+    currentUser: UserProfile? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+
     val scope = rememberCoroutineScope()
 
     // State management
@@ -153,7 +171,6 @@ fun MapWidget(
                     Log.d(TAG, "Location: ${loc.latitude}, ${loc.longitude}, bearing: ${loc.bearing}")
                     currentLocation = loc
                     currentSpeed = loc.speed
-
                     // Save location
                     sharedPrefs.edit()
                         .putFloat("last_lat", loc.latitude.toFloat())
@@ -267,6 +284,8 @@ fun MapWidget(
                 showTraffic = showTraffic,
                 mapInteractionEnabled = mapInteractionEnabled,
                 needsRecenter = needsRecenter,
+                friendLocations = friendLocations,
+                currentUser = currentUser,
                 onStyleLoaded = { styleLoaded = true },
                 onRecenterComplete = { needsRecenter = false }
             )
@@ -299,11 +318,11 @@ fun MapWidget(
                             },
                             modifier = Modifier.size(48.dp),
                             containerColor = if (mapInteractionEnabled) {
-                                androidx.compose.ui.graphics.Color(0xFF1C1C1E)
+                                Color(0xFF1C1C1E)
                             } else {
                                 androidx.compose.ui.graphics.Color(0xFF007AFF) // Highlight when locked
                             },
-                            contentColor = androidx.compose.ui.graphics.Color.White
+                            contentColor = Color.White
                         ) {
                             Icon(
                                 imageVector = if (mapInteractionEnabled) {
@@ -355,7 +374,7 @@ fun MapWidget(
                             onClick = { showSettings = true },
                             modifier = Modifier.size(48.dp),
                             containerColor = androidx.compose.ui.graphics.Color(0xFF1C1C1E),
-                            contentColor = androidx.compose.ui.graphics.Color.White
+                            contentColor = Color.White
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Settings,
@@ -365,7 +384,7 @@ fun MapWidget(
                         }
                     } else {
                         // NAVIGATING: Only show navigation cards (no buttons)
-                        androidx.compose.animation.AnimatedVisibility(
+                        AnimatedVisibility(
                             visible = !showRouteOverview && showNavigationCards,
                             enter = fadeIn(),
                             exit = fadeOut()
@@ -404,7 +423,7 @@ fun MapWidget(
                                                         text = formatDistance(distanceToNextStep),
                                                         fontSize = 24.sp,
                                                         fontWeight = FontWeight.Bold,
-                                                        color = androidx.compose.ui.graphics.Color.White
+                                                        color = Color.White
                                                     )
                                                     Text(
                                                         text = getManeuverInstruction(
@@ -423,7 +442,7 @@ fun MapWidget(
                                                     text = it,
                                                     fontSize = 16.sp,
                                                     fontWeight = FontWeight.Medium,
-                                                    color = androidx.compose.ui.graphics.Color.White,
+                                                    color = Color.White,
                                                     maxLines = 1
                                                 )
                                             }
@@ -534,7 +553,7 @@ fun MapWidget(
                             0.0
                         }
 
-                        androidx.compose.animation.AnimatedVisibility(
+                        AnimatedVisibility(
                             visible = showNavigationCards,
                             enter = fadeIn(),
                             exit = fadeOut()
@@ -557,7 +576,7 @@ fun MapWidget(
                                             formatDuration(remainingDuration),
                                             fontSize = 22.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = androidx.compose.ui.graphics.Color.White
+                                            color = Color.White
                                         )
                                         Text(
                                             "Estimated time",
@@ -574,7 +593,7 @@ fun MapWidget(
                                         Icon(
                                             Icons.Default.Route,
                                             null,
-                                            tint = androidx.compose.ui.graphics.Color.White
+                                            tint = Color.White
                                         )
                                     }
 
@@ -589,7 +608,7 @@ fun MapWidget(
                                         Icon(
                                             Icons.Default.Close,
                                             null,
-                                            tint = androidx.compose.ui.graphics.Color.Red
+                                            tint = Color.Red
                                         )
                                     }
                                 }
@@ -628,7 +647,9 @@ fun MapWidget(
                     onTrafficToggle = { showTraffic = it },
                     onNavigationCardsToggle = { showNavigationCards = it },
                     onSwitchToClock = onSwitchToClock,
-                    onDismiss = { showSettings = false }
+                    locationViewModel = locationViewModel, // Use the passed instance
+                    onDismiss = { showSettings = false },
+                    onOpenFriendsScreen = onOpenFriendsScreen,
                 )
             }
         }
@@ -646,8 +667,11 @@ fun MapSettingsDialog(
     onTrafficToggle: (Boolean) -> Unit,
     onNavigationCardsToggle: (Boolean) -> Unit,
     onSwitchToClock: () -> Unit,
+    onOpenFriendsScreen: () -> Unit,
+    locationViewModel: LocationSharingViewModel,
     onDismiss: () -> Unit
 ) {
+    var showFriendsScreen by remember { mutableStateOf(false) }
     Dialog(onDismissRequest = onDismiss) {
         Box(
             modifier = Modifier
@@ -664,7 +688,7 @@ fun MapSettingsDialog(
                 ) {
                     Text(
                         text = "Map Settings",
-                        color = androidx.compose.ui.graphics.Color.White,
+                        color = Color.White,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -672,7 +696,7 @@ fun MapSettingsDialog(
                         Icon(
                             Icons.Default.Close,
                             "Close",
-                            tint = androidx.compose.ui.graphics.Color.White
+                            tint = Color.White
                         )
                     }
                 }
@@ -685,16 +709,16 @@ fun MapSettingsDialog(
                 ) {
                     Text(
                         text = "Show Traffic",
-                        color = androidx.compose.ui.graphics.Color.White,
+                        color = Color.White,
                         fontSize = 16.sp
                     )
                     Switch(
                         checked = showTraffic,
                         onCheckedChange = onTrafficToggle,
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor = androidx.compose.ui.graphics.Color.White,
+                            checkedThumbColor = Color.White,
                             checkedTrackColor = androidx.compose.ui.graphics.Color(0xFF007AFF),
-                            uncheckedThumbColor = androidx.compose.ui.graphics.Color.White,
+                            uncheckedThumbColor = Color.White,
                             uncheckedTrackColor = androidx.compose.ui.graphics.Color(0xFF3A3A3C)
                         )
                     )
@@ -708,22 +732,36 @@ fun MapSettingsDialog(
                 ) {
                     Text(
                         text = "Show Navigation Cards",
-                        color = androidx.compose.ui.graphics.Color.White,
+                        color = Color.White,
                         fontSize = 16.sp
                     )
                     Switch(
                         checked = showNavigationCards,
                         onCheckedChange = onNavigationCardsToggle,
                         colors = SwitchDefaults.colors(
-                            checkedThumbColor = androidx.compose.ui.graphics.Color.White,
+                            checkedThumbColor = Color.White,
                             checkedTrackColor = androidx.compose.ui.graphics.Color(0xFF007AFF),
-                            uncheckedThumbColor = androidx.compose.ui.graphics.Color.White,
+                            uncheckedThumbColor = Color.White,
                             uncheckedTrackColor = androidx.compose.ui.graphics.Color(0xFF3A3A3C)
                         )
                     )
                 }
-
-                Divider(color = androidx.compose.ui.graphics.Color(0xFF3A3A3C))
+                // Friends & Location Sharing button - opens full screen
+                Button(
+                    onClick = {
+                        onOpenFriendsScreen()
+                        onDismiss()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = androidx.compose.ui.graphics.Color(0xFF007AFF)
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.People, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Friends & Location Sharing", fontSize = 16.sp)
+                }
 
                 // Switch to clock button
                 Button(
@@ -763,20 +801,20 @@ fun LocationPermissionScreen(onRequestPermission: () -> Unit) {
         Icon(
             imageVector = Icons.Default.LocationOff,
             contentDescription = "Location Permission",
-            tint = androidx.compose.ui.graphics.Color.White,
+            tint = Color.White,
             modifier = Modifier.size(64.dp)
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
             text = "Location Permission Required",
-            color = androidx.compose.ui.graphics.Color.White,
+            color = Color.White,
             fontSize = 20.sp,
             fontWeight = FontWeight.Bold
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = "Navigation requires access to your location",
-            color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.7f),
+            color = Color.White.copy(alpha = 0.7f),
             fontSize = 14.sp,
             textAlign = TextAlign.Center
         )
@@ -801,6 +839,8 @@ fun MapViewComponent(
     showRouteOverview: Boolean,
     styleLoaded: Boolean,
     currentStepIndex: Int,
+    friendLocations: List<FriendLocation> = emptyList(),
+    currentUser: UserProfile? = null,
     showTraffic: Boolean,
     mapInteractionEnabled: Boolean,
     needsRecenter: Boolean,
@@ -893,6 +933,41 @@ fun MapViewComponent(
 
             mapViewInstance.getMapboxMap().getStyle { style ->
                 try {
+                    // ============================================
+                    // CRITICAL DEBUGGING SECTION
+                    // ============================================
+                    Log.d(TAG, "========================================")
+                    Log.d(TAG, "MAP UPDATE TRIGGERED")
+                    Log.d(TAG, "Current location: $currentLocation")
+                    Log.d(TAG, "Friend locations count: ${friendLocations.size}")
+                    Log.d(TAG, "Current user: ${currentUser?.displayName} (${currentUser?.id})")
+
+                    friendLocations.forEach { friend ->
+                        Log.d(TAG, "----------------------------------------")
+                        Log.d(TAG, "Friend: ${friend.displayName} (${friend.friendId})")
+                        Log.d(TAG, "  Sharing: ${friend.isSharingLocation}")
+                        Log.d(TAG, "  Location: ${friend.latitude}, ${friend.longitude}")
+                        Log.d(TAG, "  Color: ${friend.markerColor}")
+                        Log.d(TAG, "  Last Updated: ${friend.lastUpdated}")
+
+                        // Calculate time since last update
+                        try {
+                            val lastUpdate = Instant.parse(friend.lastUpdated)
+                            val secondsAgo = ChronoUnit.SECONDS.between(lastUpdate, Instant.now())
+                            Log.d(TAG, "  Time since update: ${secondsAgo}s ago")
+
+                            // Log decision
+                            if (friend.isSharingLocation && secondsAgo <= 600) { // Increased to 10 minutes for testing
+                                Log.d(TAG, "  ✓ WILL DRAW MARKER")
+                            } else {
+                                Log.d(TAG, "  ✗ WILL NOT DRAW - sharing=${friend.isSharingLocation}, age=${secondsAgo}s")
+                            }
+                        } catch (e: Exception) {
+                            Log.e(TAG, "  ✗ Error parsing timestamp: ${e.message}")
+                        }
+                    }
+                    Log.d(TAG, "========================================")
+
                     val annotationApi = mapViewInstance.annotations
 
                     // Create hash codes to detect actual changes
@@ -933,9 +1008,46 @@ fun MapViewComponent(
                             addDestinationMarker(style, annotationApi, dest)
                         }
 
-                        // 3. Finally draw navigation pointer (on top)
+                        // 3. Draw friend markers BEFORE user marker
+                        Log.d(TAG, "→ Drawing friend markers...")
+                        var friendMarkersDrawn = 0
+                        friendLocations.forEach { friend ->
+                            // Only show if sharing and recent
+                            val lastUpdate = try {
+                                Instant.parse(friend.lastUpdated)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Invalid timestamp for friend ${friend.friendId}", e)
+                                return@forEach
+                            }
+
+                            val secondsAgo = ChronoUnit.SECONDS.between(
+                                lastUpdate,
+                                Instant.now()
+                            )
+
+                            // INCREASED TO 5 MINUTES FOR TESTING
+                            if (friend.isSharingLocation && secondsAgo <= 300) {
+                                Log.d(TAG, "→ Drawing marker for ${friend.displayName}")
+                                addFriendMarker(
+                                    style = style,
+                                    annotationApi = annotationApi,
+                                    friendId = friend.friendId,
+                                    friendName = friend.displayName,
+                                    latitude = friend.latitude,
+                                    longitude = friend.longitude,
+                                    markerColor = friend.markerColor
+                                )
+                                friendMarkersDrawn++
+                            } else {
+                                Log.d(TAG, "✗ NOT drawing marker for ${friend.displayName} - sharing=${friend.isSharingLocation}, age=${secondsAgo}s")
+                            }
+                        }
+                        Log.d(TAG, "✓ Drew $friendMarkersDrawn friend markers")
+
+                        // 4. Finally draw navigation pointer (on top)
                         currentLocation?.let { loc ->
-                            addNavigationPointer(style, annotationApi, loc)
+                            val userColor = currentUser?.markerColor ?: "#39FF14"
+                            addNavigationPointer(style, annotationApi, loc, userColor)
 
                             // Update camera - centered when not in interaction mode OR recentering
                             if (!mapInteractionEnabled || needsRecenter) {
@@ -968,6 +1080,7 @@ fun MapViewComponent(
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Map update error", e)
+                    e.printStackTrace()
                 }
             }
         }
@@ -1004,7 +1117,7 @@ fun DestinationSearchDialog(
                 ) {
                     Text(
                         text = "Set Destination",
-                        color = androidx.compose.ui.graphics.Color.White,
+                        color = Color.White,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -1012,7 +1125,7 @@ fun DestinationSearchDialog(
                         Icon(
                             Icons.Default.Close,
                             "Close",
-                            tint = androidx.compose.ui.graphics.Color.White
+                            tint = Color.White
                         )
                     }
                 }
@@ -1058,8 +1171,8 @@ fun DestinationSearchDialog(
                             }
                         ),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = androidx.compose.ui.graphics.Color.White,
-                            unfocusedTextColor = androidx.compose.ui.graphics.Color.White,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
                             focusedBorderColor = androidx.compose.ui.graphics.Color(0xFF007AFF),
                             unfocusedBorderColor = androidx.compose.ui.graphics.Color(0xFF8E8E93),
                             focusedLabelColor = androidx.compose.ui.graphics.Color(0xFF007AFF),
@@ -1084,8 +1197,8 @@ fun DestinationSearchDialog(
                         modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = androidx.compose.ui.graphics.Color.White,
-                            unfocusedTextColor = androidx.compose.ui.graphics.Color.White,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
                             focusedBorderColor = androidx.compose.ui.graphics.Color(0xFF007AFF),
                             unfocusedBorderColor = androidx.compose.ui.graphics.Color(0xFF8E8E93),
                             focusedLabelColor = androidx.compose.ui.graphics.Color(0xFF007AFF),
@@ -1110,8 +1223,8 @@ fun DestinationSearchDialog(
                             }
                         ),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = androidx.compose.ui.graphics.Color.White,
-                            unfocusedTextColor = androidx.compose.ui.graphics.Color.White,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
                             focusedBorderColor = androidx.compose.ui.graphics.Color(0xFF007AFF),
                             unfocusedBorderColor = androidx.compose.ui.graphics.Color(0xFF8E8E93),
                             focusedLabelColor = androidx.compose.ui.graphics.Color(0xFF007AFF),
@@ -1131,7 +1244,7 @@ fun DestinationSearchDialog(
                             containerColor = androidx.compose.ui.graphics.Color(0xFF2C2C2E)
                         )
                     ) {
-                        Text("Cancel", color = androidx.compose.ui.graphics.Color.White)
+                        Text("Cancel", color = Color.White)
                     }
 
                     Button(
@@ -1169,7 +1282,7 @@ fun DestinationSearchDialog(
                         if (isSearching) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(16.dp),
-                                color = androidx.compose.ui.graphics.Color.White,
+                                color = Color.White,
                                 strokeWidth = 2.dp
                             )
                         } else {
@@ -1187,12 +1300,13 @@ fun DestinationSearchDialog(
 // ============================================================================
 
 fun addNavigationPointer(
-    style: com.mapbox.maps.Style,
-    annotationApi: com.mapbox.maps.plugin.annotation.AnnotationPlugin,
-    loc: Location
+    style: Style,
+    annotationApi: AnnotationPlugin,
+    loc: Location,
+    markerColor: String = "#39FF14" // ← ADD COLOR PARAMETER
 ) {
     try {
-        val pointerBitmap = createNavigationPointer()
+        val pointerBitmap = createNavigationPointer(markerColor) // ← Pass color
 
         if (style.getStyleImage("navigation-pointer") != null) {
             style.removeStyleImage("navigation-pointer")
@@ -1202,12 +1316,11 @@ fun addNavigationPointer(
 
         val pointManager = annotationApi.createPointAnnotationManager()
 
-        // Pointer always points up (bearing 0) since map rotates
         val locationPoint = PointAnnotationOptions()
             .withPoint(Point.fromLngLat(loc.longitude, loc.latitude))
             .withIconImage("navigation-pointer")
-            .withIconRotate(0.0) // Always point up
-            .withIconSize(0.8)
+            .withIconRotate(0.0)
+            .withIconSize(0.7)
 
         pointManager.create(locationPoint)
     } catch (e: Exception) {
@@ -1216,8 +1329,8 @@ fun addNavigationPointer(
 }
 
 fun addDestinationMarker(
-    style: com.mapbox.maps.Style,
-    annotationApi: com.mapbox.maps.plugin.annotation.AnnotationPlugin,
+    style: Style,
+    annotationApi: AnnotationPlugin,
     dest: GeoPoint
 ) {
     try {
@@ -1241,7 +1354,7 @@ fun addDestinationMarker(
 }
 
 fun drawRoute(
-    annotationApi: com.mapbox.maps.plugin.annotation.AnnotationPlugin,
+    annotationApi: AnnotationPlugin,
     routePoints: List<Point>
 ) {
     try {
@@ -1250,7 +1363,7 @@ fun drawRoute(
             PolylineAnnotationOptions()
                 .withPoints(routePoints)
                 .withLineWidth(7.0)
-                .withLineColor(Color.parseColor("#00B3FF"))
+                .withLineColor(android.graphics.Color.parseColor("#00B3FF"))
         )
     } catch (e: Exception) {
         Log.e(TAG, "Error drawing route", e)
@@ -1302,28 +1415,37 @@ fun updateCamera(
 // GRAPHICS FUNCTIONS
 // ============================================================================
 
-fun createNavigationPointer(): Bitmap {
+fun createNavigationPointer(colorHex: String = "#39FF14"): Bitmap {
     val size = 120
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
     val canvas = Canvas(bitmap)
 
+    // Parse the color
+    var color = try {
+        val cleanHex = colorHex.removePrefix("#")
+        android.graphics.Color.parseColor("#$cleanHex")
+    } catch (e: Exception) {
+        Log.e(TAG, "Invalid color: $colorHex", e)
+        android.graphics.Color.parseColor("#39FF14") // Default green
+    }
+
     val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#39FF14")
+        this.color = color // ← Use the passed color
         style = Paint.Style.FILL
     }
 
     val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.BLACK
+        color = android.graphics.Color.BLACK
         style = Paint.Style.STROKE
         strokeWidth = 20f
     }
 
-    // Arrow pointing UP (since map rotates, not the pointer)
+    // Arrow pointing UP
     val path = Path().apply {
-        moveTo(size / 2f, 8f) // Top point
-        lineTo(size - 22f, size - 28f) // Right bottom
-        lineTo(size / 2f, size - 42f) // Center bottom notch
-        lineTo(22f, size - 28f) // Left bottom
+        moveTo(size / 2f, 8f)
+        lineTo(size - 22f, size - 28f)
+        lineTo(size / 2f, size - 42f)
+        lineTo(22f, size - 28f)
         close()
     }
 
@@ -1332,7 +1454,6 @@ fun createNavigationPointer(): Bitmap {
 
     return bitmap
 }
-
 fun createDestinationMarker(): Bitmap {
     val size = 100
     val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -1346,8 +1467,8 @@ fun createDestinationMarker(): Bitmap {
     val centerX = size / 2f
     val centerY = size / 2f
 
-    paint.color = Color.parseColor("#FF3B30")
-    paint.setShadowLayer(10f, 0f, 0f, Color.parseColor("#FF3B30"))
+    paint.color = android.graphics.Color.parseColor("#FF3B30")
+    paint.setShadowLayer(10f, 0f, 0f, android.graphics.Color.parseColor("#FF3B30"))
 
     canvas.drawCircle(centerX, centerY - 15f, 18f, paint)
 
@@ -1360,7 +1481,7 @@ fun createDestinationMarker(): Bitmap {
 
     canvas.drawPath(pinPath, paint)
 
-    paint.color = Color.WHITE
+    paint.color = android.graphics.Color.WHITE
     paint.clearShadowLayer()
     canvas.drawCircle(centerX, centerY - 15f, 8f, paint)
 
@@ -1374,7 +1495,7 @@ fun createDestinationMarker(): Bitmap {
 fun getManeuverIcon(
     type: String,
     modifier: String?
-): androidx.compose.ui.graphics.vector.ImageVector {
+): ImageVector {
     return when (type) {
         "turn" -> when (modifier) {
             "left" -> Icons.Default.TurnLeft
@@ -1493,7 +1614,7 @@ suspend fun fetchNavigationRoute(
 ): NavigationRoute? {
     return withContext(Dispatchers.IO) {
         try {
-            val accessToken = com.mapbox.common.MapboxOptions.accessToken
+            val accessToken = MapboxOptions.accessToken
             val url = "https://api.mapbox.com/directions/v5/mapbox/driving/" +
                     "$startLon,$startLat;$endLon,$endLat?" +
                     "steps=true&geometries=geojson&overview=full&" +
@@ -1573,8 +1694,8 @@ suspend fun fetchNavigationRoute(
 suspend fun geocodeLocation(query: String): Pair<Double, Double>? {
     return withContext(Dispatchers.IO) {
         try {
-            val accessToken = com.mapbox.common.MapboxOptions.accessToken
-            val encodedQuery = java.net.URLEncoder.encode(query, "UTF-8")
+            val accessToken = MapboxOptions.accessToken
+            val encodedQuery = URLEncoder.encode(query, "UTF-8")
             val url = "https://api.mapbox.com/geocoding/v5/mapbox.places/" +
                     "$encodedQuery.json?access_token=$accessToken&limit=1"
 
@@ -1595,4 +1716,130 @@ suspend fun geocodeLocation(query: String): Pair<Double, Double>? {
             null
         }
     }
+}
+
+@Composable
+fun LocationSharingToggle(
+    isSharing: Boolean,
+    onToggle: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column {
+            Text("Share My Location", fontWeight = FontWeight.Bold)
+            Text("Let friends see where you are", fontSize = 12.sp, color = Color.Gray)
+        }
+
+        Switch(
+            checked = isSharing,
+            onCheckedChange = { enabled ->
+                onToggle(enabled)
+            }
+        )
+    }
+}
+
+/**
+ * Draw a friend's location marker with custom color
+ */
+fun addFriendMarker(
+    style: Style,
+    annotationApi: AnnotationPlugin,
+    friendId: String,
+    friendName: String,
+    latitude: Double,
+    longitude: Double,
+    markerColor: String
+) {
+    try {
+        val markerBitmap = createFriendMarkerBitmap(markerColor, friendName)
+        val imageId = "friend-marker-$friendId"
+
+        // Remove old marker if exists
+        if (style.getStyleImage(imageId) != null) {
+            style.removeStyleImage(imageId)
+        }
+
+        style.addImage(imageId, markerBitmap)
+
+        val pointManager = annotationApi.createPointAnnotationManager()
+        val markerPoint = PointAnnotationOptions()
+            .withPoint(Point.fromLngLat(longitude, latitude))
+            .withIconImage(imageId)
+            .withIconSize(0.6)
+
+        pointManager.create(markerPoint)
+    } catch (e: Exception) {
+        Log.e(TAG, "Error adding friend marker", e)
+    }
+}
+
+/**
+ * Create friend marker bitmap with custom color
+ */
+fun createFriendMarkerBitmap(colorHex: String, initials: String = ""): Bitmap {
+    val size = 120
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+
+    val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = try {
+            // Make sure to remove any # prefix if it's there
+            val cleanHex = colorHex.removePrefix("#")
+            android.graphics.Color.parseColor("#$cleanHex")
+        } catch (e: Exception) {
+            Log.e(TAG, "Invalid color: $colorHex", e)
+            android.graphics.Color.parseColor("#007AFF") // Default blue
+        }
+        style = Paint.Style.FILL
+    }
+
+    val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = android.graphics.Color.WHITE
+        style = Paint.Style.STROKE
+        strokeWidth = 8f
+    }
+
+// Arrow pointing UP
+    val path = Path().apply {
+        moveTo(size / 2f, 8f)
+        lineTo(size - 22f, size - 28f)
+        lineTo(size / 2f, size - 42f)
+        lineTo(22f, size - 28f)
+        close()
+    }
+
+    canvas.drawPath(path, strokePaint)
+    canvas.drawPath(path, fillPaint)
+
+// Arrow center
+    val arrowCenterX = size / 2f
+    val arrowCenterY = (8f + (size - 28f)) / 2f
+
+// Draw initials
+//    if (initials.isNotEmpty()) {
+//
+//        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+//            color = android.graphics.Color.WHITE
+//            textSize = 28f
+//            textAlign = Paint.Align.CENTER
+//            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+//        }
+//
+//        val textY = arrowCenterY - ((textPaint.descent() + textPaint.ascent()) / 2)
+//
+//        canvas.drawText(
+//            initials.take(2).uppercase(),
+//            arrowCenterX,
+//            textY,
+//            textPaint
+//        )
+//    }
+
+    return bitmap
 }

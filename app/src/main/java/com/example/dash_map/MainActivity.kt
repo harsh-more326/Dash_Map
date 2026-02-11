@@ -15,15 +15,25 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
+import android.util.Log
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import com.mapbox.common.MapboxOptions
 import org.osmdroid.config.Configuration
 import org.osmdroid.util.GeoPoint
+import androidx.lifecycle.ViewModelProvider
+import com.example.dash_map.supabase.SupabaseConfig
+import com.example.dash_map.supabase.viewmodels.LocationSharingViewModel
+import com.example.dash_map.supabase.ui.AuthScreen
+import com.example.dash_map.supabase.ui.FriendsScreen
 
 class MainActivity : ComponentActivity(), LocationListener {
     private lateinit var notificationManager: NotificationManager
@@ -34,6 +44,7 @@ class MainActivity : ComponentActivity(), LocationListener {
     private var currentLocation = mutableStateOf<GeoPoint?>(null)
     private var weatherData = mutableStateOf<WeatherData?>(null)
     private var isPlaying = mutableStateOf(false)
+    private lateinit var locationViewModel: LocationSharingViewModel
     private var currentSong = mutableStateOf("No song playing")
     private var currentArtist = mutableStateOf("")
     private var albumArtBitmap = mutableStateOf<android.graphics.Bitmap?>(null)
@@ -54,44 +65,149 @@ class MainActivity : ComponentActivity(), LocationListener {
         }
     }
 
+    /**
+     * Set screen orientation based on current screen
+     */
+    private fun setOrientation(isPortrait: Boolean) {
+        requestedOrientation = if (isPortrait) {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        } else {
+            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         try {
+            // ============================================================
+            // CRITICAL: Initialize Supabase FIRST before anything else
+            // ============================================================
+            Log.d("MainActivity", "Initializing Supabase...")
+            SupabaseConfig.initialize(applicationContext)
+            Log.d("MainActivity", "✓ Supabase initialized successfully")
+
+            // Now initialize system services
+            notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
             // Set Mapbox access token
             MapboxOptions.accessToken = getString(R.string.mapbox_access_token)
 
+            // Initialize OSMDroid
             Configuration.getInstance().load(
                 applicationContext,
                 getSharedPreferences("osm_prefs", MODE_PRIVATE)
             )
             Configuration.getInstance().userAgentValue = packageName
 
-            notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-            audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            // Initialize ViewModel (Supabase is now ready)
+            Log.d("MainActivity", "Creating LocationSharingViewModel...")
+            locationViewModel = ViewModelProvider(this)[LocationSharingViewModel::class.java]
+            Log.d("MainActivity", "✓ ViewModel created successfully")
 
             requestDNDPermission()
 
             setContent {
                 DashMapTheme {
-                    DashMapScreen(
-                        showClock = showClock,
-                        onToggleClock = {showClock.value = !showClock.value},
-                        location = currentLocation.value,
-                        weather = weatherData.value,
-                        context = this,
-                        isPlaying = isPlaying.value,
-                        songTitle = currentSong.value,
-                        songArtist = currentArtist.value,
-                        albumArtBitmap = albumArtBitmap.value,
-                        onEnableDND = { enableDND() },
-                        onOpenGoogleMaps = { openGoogleMaps() },
-                        onPlayPause = { togglePlayPause() },
-                        onNext = { sendMediaButton(KeyEvent.KEYCODE_MEDIA_NEXT) },
-                        onPrevious = { sendMediaButton(KeyEvent.KEYCODE_MEDIA_PREVIOUS) }
+                    val isAuthenticated by locationViewModel.isAuthenticated.collectAsState()
+                    var showFriendsScreen by remember { mutableStateOf(false) }
 
-                    )
+                    // Handle orientation based on screen
+                    if (!isAuthenticated || showFriendsScreen) {
+                        setOrientation(true)  // Portrait for auth and friends
+                    } else {
+                        setOrientation(false) // Landscape for dashboard
+                    }
+
+                    if (!isAuthenticated) {
+                        // PORTRAIT MODE for authentication
+                        val isLoading by locationViewModel.isLoading.collectAsState()
+                        val errorMessage by locationViewModel.errorMessage.collectAsState()
+
+                        AuthScreen(
+                            isLoading = isLoading,
+                            errorMessage = errorMessage,
+                            onSignIn = { email, password ->
+                                locationViewModel.signIn(email, password)
+                            },
+                            onSignUp = { email, password, displayName ->
+                                locationViewModel.signUp(email, password, displayName)
+                            },
+                            onClearError = {
+                                locationViewModel.clearError()
+                            }
+                        )
+                    } else if (showFriendsScreen) {
+                        // PORTRAIT MODE for friends screen
+                        val currentUser by locationViewModel.currentUser.collectAsState()
+                        val friends by locationViewModel.friends.collectAsState()
+                        val isSharing by locationViewModel.isLocationSharingEnabled.collectAsState()
+                        val pendingRequests by locationViewModel.pendingRequests.collectAsState()
+                        val sentRequests by locationViewModel.sentRequests.collectAsState() // ← ADD THIS LINE
+
+                        FriendsScreen(
+                            currentUser = currentUser,
+                            friends = friends,
+                            pendingRequests = pendingRequests,
+                            sentRequests = sentRequests,
+                            isLocationSharingEnabled = isSharing,
+                            onToggleLocationSharing = { enabled ->
+                                locationViewModel.toggleLocationSharing(enabled)
+                            },
+                            onSendFriendRequest = { email ->
+                                locationViewModel.sendFriendRequest(email)
+                            },
+                            onAcceptFriendRequest = { connectionId ->
+                                locationViewModel.acceptFriendRequest(connectionId)
+                            },
+                            onRejectFriendRequest = { connectionId ->
+                                locationViewModel.rejectFriendRequest(connectionId)
+                            },
+                            onCancelSentRequest = { connectionId ->
+                                locationViewModel.cancelSentRequest(connectionId)
+                            },
+                            onRemoveFriend = { friendId ->
+                                locationViewModel.removeFriend(friendId)
+                            },
+                            onUpdateMarkerColor = { color ->
+                                locationViewModel.updateMarkerColor(color)
+                            },
+                            onSignOut = {
+                                locationViewModel.signOut()
+                            },
+                            onBack = {
+                                showFriendsScreen = false
+                            },
+                            onManualRefresh = {  // ← ADD THIS
+                                locationViewModel.manualRefresh()
+                            }
+                        )
+                    } else {
+                        // LANDSCAPE MODE for main dashboard
+                        val friendLocations by locationViewModel.friendLocations.collectAsState()
+
+                        DashMapScreen(
+                            showClock = showClock,
+                            onToggleClock = { showClock.value = !showClock.value },
+                            location = currentLocation.value,
+                            weather = weatherData.value,
+                            context = this,
+                            isPlaying = isPlaying.value,
+                            songTitle = currentSong.value,
+                            songArtist = currentArtist.value,
+                            albumArtBitmap = albumArtBitmap.value,
+                            onEnableDND = { enableDND() },
+                            onOpenGoogleMaps = { openGoogleMaps() },
+                            onPlayPause = { togglePlayPause() },
+                            onNext = { sendMediaButton(KeyEvent.KEYCODE_MEDIA_NEXT) },
+                            onPrevious = { sendMediaButton(KeyEvent.KEYCODE_MEDIA_PREVIOUS) },
+                            locationViewModel = locationViewModel,
+                            friendLocations = friendLocations,
+                            onOpenFriendsScreen = { showFriendsScreen = true }
+                        )
+                    }
                 }
             }
 
@@ -103,9 +219,43 @@ class MainActivity : ComponentActivity(), LocationListener {
                 enableImmersiveMode()
             }
         } catch (e: Exception) {
+            Log.e("MainActivity", "Error in onCreate", e)
             e.printStackTrace()
         }
     }
+
+    override fun onLocationChanged(location: Location) {
+        if (location.accuracy <= 100f || currentLocation.value == null) {
+            currentSpeed.value = location.speed * 3.6f
+            val newLocation = GeoPoint(location.latitude, location.longitude)
+            currentLocation.value = newLocation
+
+            // Update location in ViewModel for sharing
+            locationViewModel.updateLocation(location)
+
+            val distance = FloatArray(1)
+            Location.distanceBetween(
+                lastWeatherLat,
+                lastWeatherLon,
+                location.latitude,
+                location.longitude,
+                distance
+            )
+
+            val shouldFetch = weatherData.value == null || distance[0] > 5000
+
+            if (shouldFetch) {
+                lastWeatherLat = location.latitude
+                lastWeatherLon = location.longitude
+
+                WeatherService.fetchWeather(location.latitude, location.longitude) { data ->
+                    weatherData.value = data
+                }
+            }
+        }
+    }
+
+    // ... rest of the methods remain the same ...
 
     private fun togglePlayPause() {
         sendMediaButton(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
@@ -227,15 +377,13 @@ class MainActivity : ComponentActivity(), LocationListener {
                     Manifest.permission.ACCESS_FINE_LOCATION
                 ) == PackageManager.PERMISSION_GRANTED
             ) {
-                // Request GPS updates with higher accuracy
                 locationManager.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER,
-                    500L,  // Update every 500ms for better accuracy
-                    0f,    // No minimum distance
+                    500L,
+                    0f,
                     this
                 )
 
-                // Also request network updates as backup
                 locationManager.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER,
                     1000L,
@@ -243,11 +391,9 @@ class MainActivity : ComponentActivity(), LocationListener {
                     this
                 )
 
-                // Get last known location - prefer GPS over network
                 val gpsLocation = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
                 val networkLocation = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
 
-                // Use GPS if available and recent (within 2 minutes), otherwise use network
                 val lastLocation = if (gpsLocation != null &&
                     (System.currentTimeMillis() - gpsLocation.time) < 120000) {
                     gpsLocation
@@ -260,7 +406,6 @@ class MainActivity : ComponentActivity(), LocationListener {
                     lastWeatherLat = it.latitude
                     lastWeatherLon = it.longitude
 
-                    // Fetch weather with the accurate location
                     WeatherService.fetchWeather(it.latitude, it.longitude) { data ->
                         weatherData.value = data
                     }
@@ -268,37 +413,6 @@ class MainActivity : ComponentActivity(), LocationListener {
             }
         } catch (e: Exception) {
             e.printStackTrace()
-        }
-    }
-
-    override fun onLocationChanged(location: Location) {
-        // Only update if accuracy is reasonable (less than 100 meters) or no location yet
-        if (location.accuracy <= 100f || currentLocation.value == null) {
-            currentSpeed.value = location.speed * 3.6f
-            val newLocation = GeoPoint(location.latitude, location.longitude)
-            currentLocation.value = newLocation
-
-            // Calculate distance from last weather fetch location
-            val distance = FloatArray(1)
-            Location.distanceBetween(
-                lastWeatherLat,
-                lastWeatherLon,
-                location.latitude,
-                location.longitude,
-                distance
-            )
-
-            // Re-fetch weather if moved more than 5km or no weather data
-            val shouldFetch = weatherData.value == null || distance[0] > 5000
-
-            if (shouldFetch) {
-                lastWeatherLat = location.latitude
-                lastWeatherLon = location.longitude
-
-                WeatherService.fetchWeather(location.latitude, location.longitude) { data ->
-                    weatherData.value = data
-                }
-            }
         }
     }
 
