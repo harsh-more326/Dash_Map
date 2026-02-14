@@ -152,7 +152,7 @@ fun WeatherWidget(
                 Text(
                     text = "${displayWeather.temperature}°",
                     color = Color.White,
-                    fontSize = 72.sp,
+                    fontSize = 60.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -163,28 +163,6 @@ fun WeatherWidget(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.weight(1f)
             ) {
-                // Wind Speed
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Air,
-                        contentDescription = "Wind",
-                        tint = Color.White.copy(alpha = 0.9f),
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Text(
-                        text = "${displayWeather.windSpeed} km/h",
-                        color = Color.White.copy(alpha = 0.95f),
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-
-                // AQI (if available)
-                if (displayWeather.aqi > 0) {
-                    Spacer(modifier = Modifier.height(12.dp))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -200,19 +178,18 @@ fun WeatherWidget(
                                 "Very Unhealthy" -> Color(0xFFE91E63)
                                 else -> Color(0xFF9C27B0)
                             },
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(22.dp)
                         )
                         Text(
                             text = "AQI ${displayWeather.aqi}",
                             color = Color.White.copy(alpha = 0.95f),
-                            fontSize = 20.sp,
+                            fontSize = 17.sp,
                             fontWeight = FontWeight.Medium
                         )
                     }
-                }
 
                 // Humidity
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(18.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -221,18 +198,18 @@ fun WeatherWidget(
                         imageVector = Icons.Default.WaterDrop,
                         contentDescription = "Humidity",
                         tint = Color(0xFF64B5F6),
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                     Text(
                         text = "${displayWeather.humidity}%",
                         color = Color.White.copy(alpha = 0.95f),
-                        fontSize = 20.sp,
+                        fontSize = 17.sp,
                         fontWeight = FontWeight.Medium
                     )
                 }
 
                 // Visibility
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(18.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -241,12 +218,12 @@ fun WeatherWidget(
                         imageVector = Icons.Default.Visibility,
                         contentDescription = "Visibility",
                         tint = Color(0xFFAB47BC),
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                     Text(
                         text = "${displayWeather.visibility} km",
                         color = Color.White.copy(alpha = 0.95f),
-                        fontSize = 20.sp,
+                        fontSize = 17.sp,
                         fontWeight = FontWeight.Medium
                     )
                 }
@@ -259,38 +236,39 @@ fun WeatherWidget(
                 modifier = Modifier.weight(1f)
             ) {
                 if (isNightTime) {
-                    // Show moon phase and weather condition
-                    Text(
-                        text = getMoonEmoji(moonPhase),
-                        fontSize = 64.sp
-                    )
+                  Row(
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.Center
+                  ){
+                      // Show moon phase and weather condition
+                      Text(
+                          text = getMoonEmoji(moonPhase),
+                          fontSize = 60.sp
+                      )
+                  }
 
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    // Show weather condition overlay icon if not clear
-                    if (displayWeather.condition != "Clear") {
-                        Icon(
-                            imageVector = when (displayWeather.condition) {
-                                "Rainy" -> Icons.Default.WaterDrop
-                                "Snowy" -> Icons.Default.AcUnit
-                                "Stormy" -> Icons.Default.Thunderstorm
-                                "Foggy" -> Icons.Default.Cloud
-                                else -> Icons.Default.Cloud
-                            },
-                            contentDescription = displayWeather.condition,
-                            tint = Color.White.copy(alpha = 0.9f),
-                            modifier = Modifier.size(32.dp)
-                        )
-
-                        Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ){
+                        // Show weather condition overlay icon if not clear
+                        if (displayWeather.condition != "Clear") {
+                            Icon(
+                                imageVector = when (displayWeather.condition) {
+                                    "Rainy" -> Icons.Default.WaterDrop
+                                    "Snowy" -> Icons.Default.AcUnit
+                                    "Stormy" -> Icons.Default.Thunderstorm
+                                    "Foggy" -> Icons.Default.Cloud
+                                    else -> Icons.Default.Cloud
+                                },
+                                contentDescription = displayWeather.condition,
+                                tint = Color.White.copy(alpha = 0.9f),
+                                modifier = Modifier.size(32.dp)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
                     }
-
-                    Text(
-                        text = moonPhase,
-                        color = Color.White.copy(alpha = 0.7f),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Normal
-                    )
                 } else {
                     // Daytime - show sun and weather
                     Icon(

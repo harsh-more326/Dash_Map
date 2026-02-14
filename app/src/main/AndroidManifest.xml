@@ -12,7 +12,6 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
     tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.MEDIA_CONTENT_CONTROL"
@@ -46,8 +45,7 @@
         </activity>
         <meta-data
             android:name="MAPBOX_ACCESS_TOKEN"
-            android:value="pk.eyJ1IjoibW9yZWhhcnNoIiwiYSI6ImNta3NvMXhxZjFhaWozcHM5aXN1djR0cWwifQ.rR-_aom1qzeqdlgtt04Xpw" />
-
+            android:value="${MAPBOX_ACCESS_TOKEN}" />
         <!-- Notification Listener Service for Media Controls -->
         <service
             android:name=".MediaNotificationListener"

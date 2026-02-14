@@ -13,7 +13,7 @@ object WeatherService {
                     "https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&current=temperature_2m,relative_humidity_2m,weathercode,windspeed_10m,visibility&temperature_unit=celsius&timezone=auto"
                 val weatherResponse = URL(weatherUrl).readText()
                 val weatherJson = JSONObject(weatherResponse)
-
+//https://api.open-meteo.com/v1/forecast?latitude=$lat&longitude=$lon&hourly=visibility&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m
                 val current = weatherJson.getJSONObject("current")
                 val temp = current.getDouble("temperature_2m").roundToInt()
                 val weatherCode = current.getInt("weathercode")
@@ -78,22 +78,10 @@ object WeatherService {
                             city = address.optString("town")
                         }
                         if (city.isEmpty() || city == "null") {
-                            city = address.optString("village")
-                        }
-                        if (city.isEmpty() || city == "null") {
-                            city = address.optString("municipality")
+                            city = address.optString("hamlet")
                         }
                         if (city.isEmpty() || city == "null") {
                             city = address.optString("suburb")
-                        }
-                        if (city.isEmpty() || city == "null") {
-                            city = address.optString("county")
-                        }
-                        if (city.isEmpty() || city == "null") {
-                            city = address.optString("state_district")
-                        }
-                        if (city.isEmpty() || city == "null") {
-                            city = address.optString("state")
                         }
                     }
 
@@ -157,7 +145,7 @@ object WeatherService {
                         condition = "Unknown",
                         windSpeed = 0,
                         aqi = 0,
-                        aqiCategory = "Good",
+                        aqiCategory = "null",
                         humidity = 0,
                         visibility = 0
                     )
@@ -175,5 +163,5 @@ data class WeatherData(
     val aqi: Int = 0,
     val aqiCategory: String = "Good",
     val humidity: Int = 0,
-    val visibility: Int = 10 // in kilometers
+    val visibility: Int = 0 // in kilometers
 )
