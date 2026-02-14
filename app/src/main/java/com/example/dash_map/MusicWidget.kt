@@ -3,8 +3,11 @@ package com.example.dash_map
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.MarqueeAnimationMode
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,6 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MusicWidget(
     context: Context,
@@ -110,8 +114,9 @@ fun MusicWidget(
             // Left side - Album Art Area
             Box(
                 modifier = Modifier
-                    .weight(0.35f)
+                    .weight(0.40f)
                     .fillMaxHeight()
+                    .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color.Black.copy(alpha = 0.3f)),
                 contentAlignment = Alignment.Center
@@ -143,7 +148,7 @@ fun MusicWidget(
             // Right side - Song Info and Controls
             Column(
                 modifier = Modifier
-                    .weight(0.65f)
+                    .weight(0.60f)
                     .fillMaxHeight(),
                 verticalArrangement = Arrangement.SpaceBetween,
                 horizontalAlignment = Alignment.CenterHorizontally
@@ -160,7 +165,10 @@ fun MusicWidget(
                         fontSize = if (hasSong) 18.sp else 16.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        modifier = Modifier.basicMarquee(
+                            iterations = Int.MAX_VALUE,   // infinite loop
+                            animationMode = MarqueeAnimationMode.Immediately
+                        )
                     )
 
                     if (songArtist.isNotEmpty()) {
@@ -170,9 +178,13 @@ fun MusicWidget(
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            modifier = Modifier.basicMarquee(
+                                iterations = Int.MAX_VALUE,   // infinite loop
+                                animationMode = MarqueeAnimationMode.Immediately
+                            )
                         )
                     }
+                }
 
                     if (!hasSong) {
                         Spacer(modifier = Modifier.height(2.dp))
@@ -192,17 +204,12 @@ fun MusicWidget(
                             }
                         )
                     }
-                }
-
                 // Music Controls
                 Row(
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
                 ) {
                     IconButton(
                         onClick = onPrevious,
-                        modifier = Modifier.size(56.dp)
+                        modifier = Modifier.size(50.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.SkipPrevious,
@@ -217,7 +224,7 @@ fun MusicWidget(
                     IconButton(
                         onClick = onPlayPause,
                         modifier = Modifier
-                            .size(64.dp)
+                            .size(50.dp)
                             .background(Color.White, CircleShape)
                     ) {
                         Icon(
@@ -226,7 +233,7 @@ fun MusicWidget(
                             tint = if (albumArtImage != null) Color(0xFF1DB954) else Color(
                                 0xFF1DB954
                             ),
-                            modifier = Modifier.size(36.dp)
+                            modifier = Modifier.size(40.dp)
                         )
                     }
 
@@ -234,7 +241,7 @@ fun MusicWidget(
 
                     IconButton(
                         onClick = onNext,
-                        modifier = Modifier.size(56.dp)
+                        modifier = Modifier.size(50.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.SkipNext,

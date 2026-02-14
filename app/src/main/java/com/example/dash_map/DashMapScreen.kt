@@ -107,7 +107,7 @@ fun DashMapScreen(
 
             Box(
                 modifier = Modifier
-                    .weight(1f)
+                    .weight(1.3f)
                     .fillMaxHeight()
             ) {
                 AnimatedContent(

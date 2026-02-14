@@ -72,6 +72,8 @@ import java.time.Instant
 import java.time.temporal.ChronoUnit
 import kotlin.math.*
 
+
+
 private const val TAG = "MapWidget"
 
 // ============================================================================
@@ -95,6 +97,15 @@ data class NavigationRoute(
     val routePoints: List<Point>
 )
 
+/**
+ * Trip progress data for display
+ */
+data class TripProgressData(
+    val distanceRemaining: String,
+    val timeRemaining: String,
+    val estimatedTimeOfArrival: String
+)
+
 // ============================================================================
 // MAIN COMPOSABLE
 // ============================================================================
@@ -107,13 +118,12 @@ fun MapWidget(
     onOpenMaps: () -> Unit = {},
     onSwitchToClock: () -> Unit = {},
     locationViewModel: LocationSharingViewModel,
-    onOpenFriendsScreen: () -> Unit = {},// ADD THIS PARAMETER
+    onOpenFriendsScreen: () -> Unit = {},
     friendLocations: List<FriendLocation> = emptyList(),
     currentUser: UserProfile? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-
     val scope = rememberCoroutineScope()
 
     // State management
@@ -125,11 +135,12 @@ fun MapWidget(
     var showSettings by remember { mutableStateOf(false) }
     var showTraffic by remember { mutableStateOf(false) }
     var showNavigationCards by remember { mutableStateOf(true) }
-    var mapInteractionEnabled by remember { mutableStateOf(true) } // Enabled by default for exploration
+    var mapInteractionEnabled by remember { mutableStateOf(true) }
     var route by remember { mutableStateOf<NavigationRoute?>(null) }
     var currentStepIndex by remember { mutableStateOf(0) }
     var currentSpeed by remember { mutableStateOf(0f) }
     var distanceToNextStep by remember { mutableStateOf(0.0) }
+    var tripProgress by remember { mutableStateOf<TripProgressData?>(null) }
     var hasLocationPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(
@@ -141,6 +152,7 @@ fun MapWidget(
     var initialCameraSet by remember { mutableStateOf(false) }
     var styleLoaded by remember { mutableStateOf(false) }
     var needsRecenter by remember { mutableStateOf(false) }
+
 
     // Load last saved location
     val sharedPrefs = remember { context.getSharedPreferences("map_prefs", Context.MODE_PRIVATE) }
@@ -171,6 +183,7 @@ fun MapWidget(
                     Log.d(TAG, "Location: ${loc.latitude}, ${loc.longitude}, bearing: ${loc.bearing}")
                     currentLocation = loc
                     currentSpeed = loc.speed
+
                     // Save location
                     sharedPrefs.edit()
                         .putFloat("last_lat", loc.latitude.toFloat())
@@ -183,6 +196,13 @@ fun MapWidget(
                             distanceToNextStep = calculateDistance(
                                 loc.latitude, loc.longitude,
                                 step.location.latitude(), step.location.longitude()
+                            )
+
+                            // Update trip progress
+                            tripProgress = calculateTripProgress(
+                                route!!,
+                                currentStepIndex,
+                                distanceToNextStep
                             )
 
                             // Auto-advance to next step when close enough (20 meters threshold)
@@ -290,7 +310,7 @@ fun MapWidget(
                 onRecenterComplete = { needsRecenter = false }
             )
 
-            // ALL UI COMPONENTS IN ONE COLUMN TO PREVENT OVERLAP
+            // Navigation UI
             Column(
                 modifier = Modifier.fillMaxSize()
             ) {
@@ -303,16 +323,13 @@ fun MapWidget(
                     verticalAlignment = Alignment.Top
                 ) {
                     if (!isNavigating) {
-                        // NOT NAVIGATING: Show recenter/unlock, search bar, settings
-                        // Recenter/Unlock button (left) - changes based on map state
+                        // NOT NAVIGATING UI
                         FloatingActionButton(
                             onClick = {
                                 if (mapInteractionEnabled) {
-                                    // Currently unlocked - lock and recenter
                                     needsRecenter = true
                                     mapInteractionEnabled = false
                                 } else {
-                                    // Currently locked - unlock for free movement
                                     mapInteractionEnabled = true
                                 }
                             },
@@ -320,15 +337,15 @@ fun MapWidget(
                             containerColor = if (mapInteractionEnabled) {
                                 Color(0xFF1C1C1E)
                             } else {
-                                androidx.compose.ui.graphics.Color(0xFF007AFF) // Highlight when locked
+                                androidx.compose.ui.graphics.Color(0xFF007AFF)
                             },
                             contentColor = Color.White
                         ) {
                             Icon(
                                 imageVector = if (mapInteractionEnabled) {
-                                    Icons.Default.MyLocation // Recenter icon when unlocked
+                                    Icons.Default.MyLocation
                                 } else {
-                                    Icons.Default.LockOpen // Unlock icon when locked
+                                    Icons.Default.LockOpen
                                 },
                                 contentDescription = if (mapInteractionEnabled) "Recenter" else "Unlock Map",
                                 modifier = Modifier.size(24.dp)
@@ -337,7 +354,7 @@ fun MapWidget(
 
                         Spacer(modifier = Modifier.width(12.dp))
 
-                        // Search bar (center - bigger)
+                        // Search bar
                         Box(
                             modifier = Modifier
                                 .weight(1f)
@@ -369,7 +386,6 @@ fun MapWidget(
 
                         Spacer(modifier = Modifier.width(12.dp))
 
-                        // Settings button (right)
                         FloatingActionButton(
                             onClick = { showSettings = true },
                             modifier = Modifier.size(48.dp),
@@ -383,7 +399,7 @@ fun MapWidget(
                             )
                         }
                     } else {
-                        // NAVIGATING: Only show navigation cards (no buttons)
+                        // NAVIGATING: Show enhanced navigation cards with trip progress
                         AnimatedVisibility(
                             visible = !showRouteOverview && showNavigationCards,
                             enter = fadeIn(),
@@ -392,95 +408,54 @@ fun MapWidget(
                             Column(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                // Current step card
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(0.75f),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = androidx.compose.ui.graphics.Color(0xFF1C1C1E)
-                                    ),
-                                    shape = RoundedCornerShape(16.dp)
-                                ) {
-                                    route?.steps?.getOrNull(currentStepIndex)?.let { step ->
+                                // Current step card ONLY (no separate trip progress card)
+                                route?.steps?.getOrNull(currentStepIndex)?.let { step ->
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(0.40f), // ✅ Reduced from 0.75f to 0.5f
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = androidx.compose.ui.graphics.Color(0xFF1C1C1E)
+                                        ),
+                                        shape = RoundedCornerShape(12.dp) // ✅ Smaller corner radius
+                                    ) {
                                         Column(
-                                            modifier = Modifier.padding(16.dp),
-                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                            modifier = Modifier.padding(12.dp), // ✅ Reduced from 16.dp
+                                            verticalArrangement = Arrangement.spacedBy(6.dp) // ✅ Reduced spacing
                                         ) {
                                             Row(
                                                 verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp) // ✅ Reduced spacing
                                             ) {
                                                 Icon(
-                                                    getManeuverIcon(
-                                                        step.maneuverType,
-                                                        step.maneuverModifier
-                                                    ),
+                                                    getManeuverIcon(step.maneuverType, step.maneuverModifier),
                                                     contentDescription = null,
                                                     tint = androidx.compose.ui.graphics.Color(0xFF00B3FF),
-                                                    modifier = Modifier.size(32.dp)
+                                                    modifier = Modifier.size(28.dp) // ✅ Reduced from 32.dp
                                                 )
                                                 Column {
                                                     Text(
                                                         text = formatDistance(distanceToNextStep),
-                                                        fontSize = 24.sp,
+                                                        fontSize = 22.sp, // ✅ Reduced from 24.sp
                                                         fontWeight = FontWeight.Bold,
                                                         color = Color.White
                                                     )
                                                     Text(
-                                                        text = getManeuverInstruction(
-                                                            step.maneuverType,
-                                                            step.maneuverModifier
-                                                        ),
-                                                        fontSize = 15.sp,
+                                                        text = getManeuverInstruction(step.maneuverType, step.maneuverModifier),
+                                                        fontSize = 13.sp, // ✅ Reduced from 15.sp
                                                         color = androidx.compose.ui.graphics.Color(0xFFB0B0B0)
                                                     )
                                                 }
                                             }
 
-                                            // Road name
                                             step.name?.let {
                                                 Text(
                                                     text = it,
-                                                    fontSize = 16.sp,
+                                                    fontSize = 14.sp, // ✅ Reduced from 16.sp
                                                     fontWeight = FontWeight.Medium,
                                                     color = Color.White,
                                                     maxLines = 1
                                                 )
                                             }
                                         }
-                                    }
-                                }
-
-                                // Next step preview
-                                val nextStep = route?.steps?.getOrNull(currentStepIndex + 1)
-                                nextStep?.let { next ->
-                                    Row(
-                                        modifier = Modifier.padding(start = 12.dp, top = 8.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "Then",
-                                            fontSize = 14.sp,
-                                            color = androidx.compose.ui.graphics.Color(0xFF8E8E93)
-                                        )
-                                        Icon(
-                                            imageVector = getManeuverIcon(
-                                                next.maneuverType,
-                                                next.maneuverModifier
-                                            ),
-                                            contentDescription = "Next",
-                                            tint = androidx.compose.ui.graphics.Color(0xFF8E8E93),
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Text(
-                                            text = getManeuverInstruction(
-                                                next.maneuverType,
-                                                next.maneuverModifier
-                                            ),
-                                            fontSize = 13.sp,
-                                            color = androidx.compose.ui.graphics.Color(0xFF8E8E93),
-                                            maxLines = 1
-                                        )
                                     }
                                 }
                             }
@@ -490,9 +465,8 @@ fun MapWidget(
 
                 Spacer(modifier = Modifier.weight(1f))
 
-                // BOTTOM: Navigation button OR Navigation controls
+                // BOTTOM: Navigation controls
                 if (!isNavigating) {
-                    // Start navigation button
                     if (mapDestination != null && route != null) {
                         Button(
                             onClick = {
@@ -500,7 +474,7 @@ fun MapWidget(
                                 isNavigating = true
                                 currentStepIndex = 0
                                 showRouteOverview = false
-                                mapInteractionEnabled = false // Lock map during navigation
+                                mapInteractionEnabled = false
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -521,7 +495,6 @@ fun MapWidget(
                         }
                     }
 
-                    // Loading indicator
                     if (mapDestination != null && route == null) {
                         Box(
                             modifier = Modifier
@@ -537,84 +510,20 @@ fun MapWidget(
                         }
                     }
                 } else {
-                    // Navigation bottom control card
-                    route?.let { navRoute ->
-                        // Calculate remaining duration
-                        val currentStep = navRoute.steps.getOrNull(currentStepIndex)
-                        val remainingDuration = if (currentStep != null) {
-                            val timeToNextStep = if (currentStep.distance > 0) {
-                                (distanceToNextStep / currentStep.distance) * currentStep.duration
-                            } else {
-                                0.0
-                            }
-                            timeToNextStep + navRoute.steps.drop(currentStepIndex + 1)
-                                .sumOf { it.duration }
-                        } else {
-                            0.0
+                    // Navigation control card
+                    NavigationControlCard(
+                        tripProgress = tripProgress,
+                        onOverviewToggle = { showRouteOverview = !showRouteOverview },
+                        onEndNavigation = {
+                            isNavigating = false
+                            currentStepIndex = 0
+                            route = null
+                            mapDestination = null
+                            showRouteOverview = false
+                            mapInteractionEnabled = true
+                            tripProgress = null
                         }
-
-                        AnimatedVisibility(
-                            visible = showNavigationCards,
-                            enter = fadeIn(),
-                            exit = fadeOut()
-                        ) {
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = androidx.compose.ui.graphics.Color(0xFF1C1C1E)
-                                ),
-                                shape = RoundedCornerShape(18.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(16.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column {
-                                        Text(
-                                            formatDuration(remainingDuration),
-                                            fontSize = 22.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.White
-                                        )
-                                        Text(
-                                            "Estimated time",
-                                            fontSize = 13.sp,
-                                            color = androidx.compose.ui.graphics.Color(0xFFB0B0B0)
-                                        )
-                                    }
-
-                                    Spacer(Modifier.weight(1f))
-
-                                    IconButton(onClick = {
-                                        showRouteOverview = !showRouteOverview
-                                    }) {
-                                        Icon(
-                                            Icons.Default.Route,
-                                            null,
-                                            tint = Color.White
-                                        )
-                                    }
-
-                                    IconButton(onClick = {
-                                        isNavigating = false
-                                        currentStepIndex = 0
-                                        route = null
-                                        mapDestination = null
-                                        showRouteOverview = false
-                                        mapInteractionEnabled = true // Re-enable interaction
-                                    }) {
-                                        Icon(
-                                            Icons.Default.Close,
-                                            null,
-                                            tint = Color.Red
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    )
                 }
             }
 
@@ -647,7 +556,7 @@ fun MapWidget(
                     onTrafficToggle = { showTraffic = it },
                     onNavigationCardsToggle = { showNavigationCards = it },
                     onSwitchToClock = onSwitchToClock,
-                    locationViewModel = locationViewModel, // Use the passed instance
+                    locationViewModel = locationViewModel,
                     onDismiss = { showSettings = false },
                     onOpenFriendsScreen = onOpenFriendsScreen,
                 )
@@ -655,10 +564,174 @@ fun MapWidget(
         }
     }
 }
-
 // ============================================================================
 // UI COMPONENTS
 // ============================================================================
+
+
+/**
+ * Enhanced navigation control card with trip progress integrated
+ */
+@Composable
+fun NavigationControlCard(
+    tripProgress: TripProgressData?,
+    onOverviewToggle: () -> Unit,
+    onEndNavigation: () -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = androidx.compose.ui.graphics.Color(0xFF1C1C1E)
+        ),
+        shape = RoundedCornerShape(18.dp)
+    ) {
+        // Single row with button - progress info - button layout
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            // LEFT: Route overview button
+            IconButton(
+                onClick = onOverviewToggle,
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(
+                    Icons.Default.Route,
+                    "Route Overview",
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            // CENTER: Trip progress info
+            tripProgress?.let { progress ->
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Distance
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    ) {
+                        Text(
+                            text = progress.distanceRemaining,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Distance",
+                            fontSize = 10.sp,
+                            color = androidx.compose.ui.graphics.Color(0xFF8E8E93)
+                        )
+                    }
+
+                    Divider(
+                        modifier = Modifier
+                            .height(28.dp)
+                            .width(1.dp),
+                        color = androidx.compose.ui.graphics.Color(0xFF3A3A3C)
+                    )
+
+                    // Time
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    ) {
+                        Text(
+                            text = progress.timeRemaining,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Time",
+                            fontSize = 10.sp,
+                            color = androidx.compose.ui.graphics.Color(0xFF8E8E93)
+                        )
+                    }
+                }
+            } ?: Spacer(Modifier.weight(1f)) // If no progress, just add spacer
+
+            Divider(
+                modifier = Modifier
+                    .height(28.dp)
+                    .width(1.dp),
+                color = androidx.compose.ui.graphics.Color(0xFF3A3A3C)
+            )
+            // RIGHT: End navigation button
+            Button(
+                onClick = onEndNavigation,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = androidx.compose.ui.graphics.Color(0xFFFF3B30)
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.height(48.dp)
+            ) {
+                Icon(
+                    Icons.Default.Close,
+                    "End Navigation",
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+                Text("End", color = Color.White, fontSize = 15.sp)
+            }
+        }
+    }
+}
+// ============================================================================
+// MAPBOX NAVIGATION SDK HELPERS
+// ============================================================================
+
+/**
+ * Calculate trip progress data
+ */
+fun calculateTripProgress(
+    route: NavigationRoute,
+    currentStepIndex: Int,
+    distanceToNextStep: Double
+): TripProgressData {
+    val currentStep = route.steps.getOrNull(currentStepIndex)
+
+    // Calculate remaining distance
+    val remainingDistance = if (currentStep != null) {
+        distanceToNextStep + route.steps.drop(currentStepIndex + 1).sumOf { it.distance }
+    } else {
+        route.totalDistance
+    }
+
+    // Calculate remaining duration
+    val remainingDuration = if (currentStep != null) {
+        val timeToNextStep = if (currentStep.distance > 0) {
+            (distanceToNextStep / currentStep.distance) * currentStep.duration
+        } else {
+            0.0
+        }
+        timeToNextStep + route.steps.drop(currentStepIndex + 1).sumOf { it.duration }
+    } else {
+        route.totalDuration
+    }
+
+    // Calculate ETA
+    val currentTime = System.currentTimeMillis()
+    val etaMillis = currentTime + (remainingDuration * 1000).toLong()
+    val eta = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+        .format(java.util.Date(etaMillis))
+
+    return TripProgressData(
+        distanceRemaining = formatDistance(remainingDistance),
+        timeRemaining = formatDuration(remainingDuration),
+        estimatedTimeOfArrival = eta
+    )
+}
 
 @Composable
 fun MapSettingsDialog(
