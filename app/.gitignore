@@ -4,3 +4,4 @@ gradle.properties
 settings.gradle.kts
 /.gradle.properties
 .gradle.properties
+gradle.properties
