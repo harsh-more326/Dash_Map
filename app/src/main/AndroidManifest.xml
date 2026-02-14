@@ -46,7 +46,6 @@
         <meta-data
             android:name="MAPBOX_ACCESS_TOKEN"
             android:value="${MAPBOX_ACCESS_TOKEN}" />
-
         <!-- Notification Listener Service for Media Controls -->
         <service
             android:name=".MediaNotificationListener"
