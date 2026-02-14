@@ -14,7 +14,7 @@ android {
         targetSdk = 35
         versionCode = 3
         versionName = "4.0"
-
+        manifestPlaceholders["MAPBOX_ACCESS_TOKEN"] = providers.gradleProperty("MAPBOX_ACCESS_TOKEN").get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true

@@ -45,7 +45,7 @@
         </activity>
         <meta-data
             android:name="MAPBOX_ACCESS_TOKEN"
-            android:value="pk.eyJ1IjoibW9yZWhhcnNoIiwiYSI6ImNta3NvMXhxZjFhaWozcHM5aXN1djR0cWwifQ.rR-_aom1qzeqdlgtt04Xpw" />
+            android:value="${MAPBOX_ACCESS_TOKEN}" />
 
         <!-- Notification Listener Service for Media Controls -->
         <service
